@@ -1,12 +1,4 @@
-import {
-  API,
-  APIEvent,
-  DynamicPlatformPlugin,
-  Logging,
-  PlatformAccessory,
-  PlatformAccessoryEvent,
-  PlatformConfig,
-} from 'homebridge';
+import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge' with { 'resolution-mode': 'import' };
 import { CGDGarageDoor } from './CGDGarageDoor';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 
@@ -33,7 +25,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
       deviceLocalKey,
     });
 
-    api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
+    api.on('didFinishLaunching', () => {
       this.log('Did finish launching');
       this.addAccessory(deviceHostname, cgdGarageDoor);
     });
@@ -65,7 +57,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
   }
 
   configureGarageDoorAccessory(accessory: PlatformAccessory, cgdGarageDoor: CGDGarageDoor) {
-    accessory.on(PlatformAccessoryEvent.IDENTIFY, () => {
+    accessory.on('identify', () => {
       this.log('%s identified!', accessory.displayName);
     });
 
