@@ -1,9 +1,6 @@
-import { Logging } from 'homebridge';
-import http from 'http';
+import type { CharacteristicValue, Logging } from 'homebridge' with { 'resolution-mode': 'import' };
 import parseDoorState, { DoorState } from './parseDoorState';
 import retry from './retry';
-
-const httpAgent = new http.Agent({ keepAlive: true });
 
 interface Status {
   lamp: 'on' | 'off';
@@ -110,11 +107,9 @@ export class CGDGarageDoor {
         this.log.debug(`Running command: ${cmd}=${value}`);
 
         const { deviceHostname, deviceLocalKey } = this.config;
-        const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-          agent: httpAgent,
-        });
+        // Node's built-in fetch (undici) keeps connections alive by default,
+        // so no custom keep-alive agent is required.
+        const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`);
 
         const data = await response.json();
 
@@ -334,7 +329,7 @@ export class CGDGarageDoor {
     }[lampState];
   };
 
-  public setLightbulb = async (value): Promise<void> => {
+  public setLightbulb = async (value: CharacteristicValue): Promise<void> => {
     this.withIsUpdating(async () => {
       if (value) {
         this.log.debug('Turning on lightbulb...');
@@ -370,7 +365,7 @@ export class CGDGarageDoor {
     }[vacationState];
   };
 
-  public setVacation = async (value): Promise<void> => {
+  public setVacation = async (value: CharacteristicValue): Promise<void> => {
     this.withIsUpdating(async () => {
       if (value) {
         this.log.debug('Turning on vacation...');
