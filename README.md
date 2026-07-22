@@ -27,9 +27,20 @@ Add the following to your Homebridge config.json:
 {
     "name": "homebridge-cgd-garage-door",
     "platform": "CGDGarageDoor",
-    "deviceHostname": "<DEVICE_HOSTNAME>",
+    "deviceHostname": "<DEVICE_HOSTNAME|IP_ADDRESS>",
     "deviceLocalKey": "<DEVICE_LOCAL_KEY>",
 }
 ```
 
 You can find the deviceHostname and deviceLocalKey in the Local API section of the [MY CGD SMARTPHONE APP](https://www.cgdoors.com.au/garage-door-smartphone-app/).
+
+## Camera Integration
+
+Centurion Garage Doors also come with a door camera, which operates on port `88`. Camera functionality is not included in this plugin. However, you can use the [Homebridge Camera FFmpeg](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg) plugin to integrate the camera into Homebridge. 
+
+To configure the camera, set the Homebridge Camera FFmpeg `Video Source` parameter to:
+
+```text
+-f mjpeg -i http://[DEVICE_HOSTNAME|IP_ADDRESS]:88:0 -map 0:v
+```
+
