@@ -28,7 +28,7 @@ Add the following to your Homebridge config.json:
     "name": "homebridge-cgd-garage-door",
     "platform": "CGDGarageDoor",
     "deviceHostname": "<DEVICE_HOSTNAME|IP_ADDRESS>",
-    "deviceLocalKey": "<DEVICE_LOCAL_KEY>",
+    "deviceLocalKey": "<DEVICE_LOCAL_KEY>"
 }
 ```
 

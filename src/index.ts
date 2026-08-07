@@ -1,11 +1,11 @@
-import type { API } from 'homebridge' with { 'resolution-mode': 'import' };
+import type { API } from 'homebridge';
 
-import { PLATFORM_NAME } from './settings';
-import { CGDCameraPlatform } from './platform';
+import { PLATFORM_NAME } from './settings.js';
+import { CGDCameraPlatform } from './platform.js';
 
 /**
  * This method registers the platform with Homebridge
  */
-export = (api: API) => {
+export default (api: API) => {
   api.registerPlatform(PLATFORM_NAME, CGDCameraPlatform);
 };

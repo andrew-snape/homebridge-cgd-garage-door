@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
-    "target": "ES2022", // ~node18+
-    "module": "node16",
-    "moduleResolution": "node16",
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "lib": [
-      "es2022"
+      "ES2022"
     ],
     "declaration": true,
     "declarationMap": true,
@@ -14,9 +14,11 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false
   },
   "include": [
+    "eslint.config.js",
     "src/"
   ],
   "exclude": [
