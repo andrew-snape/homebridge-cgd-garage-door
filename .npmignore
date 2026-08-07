@@ -13,6 +13,9 @@ tsconfig.json
 # nodemon
 nodemon.json
 
+# local homebridge test harness
+test/
+
 # Dependency directories
 node_modules/
 

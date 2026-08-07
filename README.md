@@ -44,3 +44,9 @@ To configure the camera, set the Homebridge Camera FFmpeg `Video Source` paramet
 -f mjpeg -i http://[DEVICE_HOSTNAME|IP_ADDRESS]:88:0 -map 0:v
 ```
 
+## Development
+
+1. `npm install`
+2. Fill in the real `deviceHostname`/`deviceLocalKey` for your door in `test/hbConfig/config.json` locally — don't commit your real credentials
+3. `npm run watch` — builds the plugin, links it globally, then runs Homebridge against `test/hbConfig` in debug mode, rebuilding and restarting on every change to `src/`
+

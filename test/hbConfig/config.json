@@ -1,0 +1,33 @@
+{
+  "bridge": {
+    "name": "CGD Garage Door",
+    "username": "0E:B7:34:AA:5C:21",
+    "port": 51826,
+    "pin": "031-45-154"
+  },
+  "description": "Local test bridge for homebridge-cgd-garage-door development",
+  "plugins": [
+    "homebridge-cgd-garage-door",
+    "homebridge-config-ui-x"
+  ],
+  "platforms": [
+    {
+      "name": "Config",
+      "port": 8581,
+      "auth": "none",
+      "theme": "auto",
+      "tempUnits": "c",
+      "lang": "auto",
+      "sudo": false,
+      "platform": "config",
+      "debug": false
+    },
+    {
+      "name": "homebridge-cgd-garage-door",
+      "platform": "CGDGarageDoor",
+      "deviceHostname": "<DEVICE_HOSTNAME|IP_ADDRESS>",
+      "deviceLocalKey": "<DEVICE_LOCAL_KEY>"
+    }
+  ],
+  "accessories": []
+}
