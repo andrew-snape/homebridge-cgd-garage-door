@@ -1,6 +1,6 @@
-import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge' with { 'resolution-mode': 'import' };
-import { CGDGarageDoor } from './CGDGarageDoor';
-import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
+import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge';
+import { CGDGarageDoor } from './CGDGarageDoor.js';
+import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 export class CGDCameraPlatform implements DynamicPlatformPlugin {
   private readonly log: Logging;

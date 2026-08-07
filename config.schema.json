@@ -2,24 +2,24 @@
   "pluginAlias": "CGDGarageDoor",
   "pluginType": "platform",
   "singular": true,
+  "strictValidation": false,
   "schema": {
     "type": "object",
+    "required": ["name", "deviceHostname", "deviceLocalKey"],
+    "additionalProperties": false,
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "required": true,
         "default": "CGDGarageDoor"
       },
       "deviceHostname": {
         "title": "Device Hostname",
-        "type": "string",
-        "required": true
+        "type": "string"
       },
       "deviceLocalKey": {
         "title": "Device Local Key",
-        "type": "string",
-        "required": true
+        "type": "string"
       }
     }
   }

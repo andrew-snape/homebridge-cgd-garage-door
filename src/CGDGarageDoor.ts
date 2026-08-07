@@ -1,6 +1,6 @@
-import type { CharacteristicValue, Logging } from 'homebridge' with { 'resolution-mode': 'import' };
-import parseDoorState, { DoorState } from './parseDoorState';
-import retry from './retry';
+import type { CharacteristicValue, Logging } from 'homebridge';
+import parseDoorState, { DoorState } from './parseDoorState.js';
+import retry from './retry.js';
 
 interface Status {
   lamp: 'on' | 'off';
