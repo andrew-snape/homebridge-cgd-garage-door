@@ -7,7 +7,7 @@
   },
   "description": "Local test bridge for homebridge-cgd-garage-door development",
   "plugins": [
-    "@andrew-snape/homebridge-cgd-garage-door",
+    "@snapeos/homebridge-cgd-garage-door",
     "homebridge-config-ui-x"
   ],
   "platforms": [

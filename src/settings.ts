@@ -6,4 +6,4 @@ export const PLATFORM_NAME = 'CGDGarageDoor';
 /**
  * This must match the name of your plugin as defined the package.json
  */
-export const PLUGIN_NAME = '@andrew-snape/homebridge-cgd-garage-door';
+export const PLUGIN_NAME = '@snapeos/homebridge-cgd-garage-door';
