@@ -16,13 +16,7 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish current package.json version to npm
-        run: npm publish --access public
+      - name: Point latest dist-tag at 1.0.1
+        run: npm dist-tag add @snapeos/homebridge-cgd-garage-door@1.0.1 latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
