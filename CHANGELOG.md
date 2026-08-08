@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.0.0...v1.0.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* rename npm package scope to match the actual npm account ([360d35d](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/360d35d04f46c9532988de9060938d6371dabedf))
+
 # 1.0.0 (2026-08-07)
 
 
