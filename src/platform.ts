@@ -64,12 +64,21 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const information = accessory.getService(this.api.hap.Service.AccessoryInformation) || accessory.addService(this.api.hap.Service.AccessoryInformation);
     information
       .setCharacteristic(this.api.hap.Characteristic.Manufacturer, 'CGD')
-      .setCharacteristic(this.api.hap.Characteristic.Model, 'PRO Sectional Door Opener');
+      .setCharacteristic(this.api.hap.Characteristic.Model, 'PRO Sectional Door Opener')
+      // The device's local API exposes no real serial number; its hostname is the
+      // most stable per-device identifier available, so use that instead of HAP's
+      // random fallback.
+      .setCharacteristic(this.api.hap.Characteristic.SerialNumber, accessory.displayName);
 
     const garageDoorOpener = accessory.getService(this.api.hap.Service.GarageDoorOpener) || accessory.addService(new this.api.hap.Service.GarageDoorOpener(accessory.displayName));
 
     garageDoorOpener.getCharacteristic(this.api.hap.Characteristic.CurrentDoorState)
-      .onGet(() => cgdGarageDoor.getCurrentDoorState());
+      .onGet(() => {
+        if (cgdGarageDoor.hasDeviceError()) {
+          throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+        }
+        return cgdGarageDoor.getCurrentDoorState();
+      });
 
     garageDoorOpener.getCharacteristic(this.api.hap.Characteristic.TargetDoorState)
       .onGet(() => cgdGarageDoor.getTargetDoorState())
@@ -89,7 +98,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     cgdGarageDoor.onStatusUpdate(() => {
       garageDoorOpener
-        .getCharacteristic(this.api.hap.Characteristic.CurrentDoorState).updateValue(cgdGarageDoor.getCurrentDoorState());
+        .getCharacteristic(this.api.hap.Characteristic.CurrentDoorState).updateValue(
+          cgdGarageDoor.hasDeviceError()
+            ? new Error(`CGD device reported error code ${cgdGarageDoor.getDeviceErrorCode()}`)
+            : cgdGarageDoor.getCurrentDoorState(),
+        );
 
       garageDoorOpener
         .getCharacteristic(this.api.hap.Characteristic.TargetDoorState).updateValue(cgdGarageDoor.getTargetDoorState());

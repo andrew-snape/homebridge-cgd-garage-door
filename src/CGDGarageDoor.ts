@@ -221,11 +221,16 @@ export class CGDGarageDoor {
     }
 
     this.status = status;
+
+    if (this.hasDeviceError()) {
+      this.log.warn(`CGD device reported error code ${this.status?.error}`);
+    }
+
     this.statusUpdateListener?.();
   };
 
   private isStatusEqual = (data?: Status) => {
-    const values = ['lamp', 'door', 'vacation'];
+    const values = ['lamp', 'door', 'vacation', 'error'];
     return values.every((value) => this.status?.[value] === data?.[value]);
   };
 
@@ -237,6 +242,10 @@ export class CGDGarageDoor {
   public onStatusUpdate = (listener: StatusUpdateListener) => {
     this.statusUpdateListener = listener;
   };
+
+  public hasDeviceError = (): boolean => !!this.status?.error && this.status.error !== '0';
+
+  public getDeviceErrorCode = (): string | undefined => this.status?.error;
 
   public waitForStatus = () => new Promise<void>((resolve) => {
     this.log.info('Pulse - Ping...');
