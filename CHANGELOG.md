@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.1.0...v1.2.0) (2026-08-10)
+
+
+### Features
+
+* add a momentary Stop button for the garage door ([003e6dc](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/003e6dcf0c3db55cb186b6d4d18d650deb446dc6))
+
 # [1.1.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.0.1...v1.1.0) (2026-08-10)
 
 
