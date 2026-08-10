@@ -90,11 +90,45 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
       .onGet(() => cgdGarageDoor.getLightbulb())
       .onSet((value) => cgdGarageDoor.setLightbulb(value));
 
-    const vacationSwitch = accessory.getService(this.api.hap.Service.Switch) || accessory.addService(new this.api.hap.Service.Switch(accessory.displayName));
+    // Prior versions added a single, subtype-less Switch service for vacation mode.
+    // Now that there are two switches, both need distinct subtypes to coexist on
+    // one accessory — remove that legacy service so it doesn't linger as an
+    // orphaned, unmanaged tile once the subtyped ones below replace it.
+    const legacySwitch = accessory.services.find(
+      (service) => service.UUID === this.api.hap.Service.Switch.UUID && !service.subtype,
+    );
+    if (legacySwitch) {
+      accessory.removeService(legacySwitch);
+    }
+
+    const vacationSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'vacation')
+      || accessory.addService(new this.api.hap.Service.Switch('Vacation Mode', 'vacation'));
 
     vacationSwitch.getCharacteristic(this.api.hap.Characteristic.On)
       .onGet(() => cgdGarageDoor.getVacation())
       .onSet((value) => cgdGarageDoor.setVacation(value));
+
+    const stopSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'stop')
+      || accessory.addService(new this.api.hap.Service.Switch('Stop', 'stop'));
+
+    // Modeled as a momentary button: HomeKit's GarageDoorOpener has no native
+    // "stop" action (TargetDoorState only supports open/closed), and the device
+    // has no persistent "stopped" toggle state to read back — it's a one-shot
+    // command. Flipping back off shortly after makes it behave like a button
+    // rather than a switch that gets stuck "on".
+    stopSwitch.getCharacteristic(this.api.hap.Characteristic.On)
+      .onGet(() => false)
+      .onSet(async (value) => {
+        if (!value) {
+          return;
+        }
+
+        await cgdGarageDoor.triggerStop();
+
+        setTimeout(() => {
+          stopSwitch.getCharacteristic(this.api.hap.Characteristic.On).updateValue(false);
+        }, 1000);
+      });
 
     cgdGarageDoor.onStatusUpdate(() => {
       garageDoorOpener

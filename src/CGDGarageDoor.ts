@@ -333,6 +333,18 @@ export class CGDGarageDoor {
     });
   };
 
+  public triggerStop = async (): Promise<void> => {
+    this.withIsUpdating(async () => {
+      this.log.debug('Stopping door...');
+      await this.run({
+        cmd: 'door', value: 'stop',
+        softValue: 'Stopped',
+        until: this.until((status) => parseDoorState(status.door) === DoorState.Stopped),
+      });
+      this.log.debug('Stopped door!');
+    });
+  };
+
   public getLightbulb = (): number => {
     const lampState = this.status?.lamp;
 
