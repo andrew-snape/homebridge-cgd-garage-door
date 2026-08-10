@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.0.1...v1.1.0) (2026-08-10)
+
+
+### Features
+
+* surface real device identity and error state in HomeKit ([7fee787](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/7fee787b2ba4811de403d1da5ee31bdabdedb3b6))
+
 ## [1.0.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.0.0...v1.0.1) (2026-08-08)
 
 
