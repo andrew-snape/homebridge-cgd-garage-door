@@ -21,6 +21,14 @@ interface Config {
 
 type StatusUpdateListener = () => void;
 
+// The device's documented local API command set (see the CGD app's "Local API" screen):
+// status=json, door=[open|stop|close], lamp=[on|off], vacation=[on|off]
+type ApiCall =
+  | { cmd: 'status'; value: 'json' }
+  | { cmd: 'door'; value: 'open' | 'stop' | 'close' }
+  | { cmd: 'lamp'; value: 'on' | 'off' }
+  | { cmd: 'vacation'; value: 'on' | 'off' };
+
 export class CGDGarageDoor {
   private readonly log: Logging;
   private config: Config;
@@ -84,8 +92,7 @@ export class CGDGarageDoor {
     cmd, value,
     softValue = value,
     until,
-  }: {
-    cmd: string; value: string;
+  }: ApiCall & {
     softValue?: string;
     until?: () => Promise<boolean>;
   }): Promise<unknown> => {
@@ -95,7 +102,9 @@ export class CGDGarageDoor {
 
       if (this.status?.[cmd]) {
         oldStatus = { ...this.status };
-        this.status[cmd] = softValue;
+        // softValue is an optimistic placeholder for whichever field `cmd` names,
+        // not necessarily one of that field's real device values (e.g. 'Opening').
+        (this.status as unknown as Record<string, string>)[cmd] = softValue;
 
         if (!this.isStatusEqual(oldStatus)) {
           this.log.debug(`Updating ${cmd} to ${softValue}`);
