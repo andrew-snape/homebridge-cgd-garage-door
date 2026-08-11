@@ -169,10 +169,12 @@ export class CGDGarageDoor {
     this.isUpdating = true;
     this.log.debug('Updating is in progress...');
 
-    await fn();
-
-    this.isUpdating = false;
-    this.log.debug('Updating is finished');
+    try {
+      await fn();
+    } finally {
+      this.isUpdating = false;
+      this.log.debug('Updating is finished');
+    }
   };
 
   private until = (fn: (status: Status) => boolean) => async (): Promise<boolean> => {
@@ -330,7 +332,7 @@ export class CGDGarageDoor {
         });
         this.log.debug('Closed door!');
       }
-    });
+    }).catch((error) => this.log.error(`Unexpected error setting target door state: ${error}`));
   };
 
   public triggerStop = async (): Promise<void> => {
@@ -342,7 +344,7 @@ export class CGDGarageDoor {
         until: this.until((status) => parseDoorState(status.door) === DoorState.Stopped),
       });
       this.log.debug('Stopped door!');
-    });
+    }).catch((error) => this.log.error(`Unexpected error stopping door: ${error}`));
   };
 
   public getLightbulb = (): number => {
@@ -378,7 +380,7 @@ export class CGDGarageDoor {
         });
         this.log.debug('Turned off lightbulb!');
       }
-    });
+    }).catch((error) => this.log.error(`Unexpected error setting lightbulb: ${error}`));
   };
 
   public getVacation = (): number => {
@@ -414,6 +416,6 @@ export class CGDGarageDoor {
         });
         this.log.debug('Turned off vacation!');
       }
-    });
+    }).catch((error) => this.log.error(`Unexpected error setting vacation mode: ${error}`));
   };
 }
