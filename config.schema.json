@@ -20,6 +20,17 @@
       "deviceLocalKey": {
         "title": "Device Local Key",
         "type": "string"
+      },
+      "enableCamera": {
+        "title": "Enable Camera",
+        "type": "boolean",
+        "default": true,
+        "description": "Expose the door camera's live view and snapshots in HomeKit."
+      },
+      "videoProcessor": {
+        "title": "Video Processor Path",
+        "type": "string",
+        "description": "Path to an ffmpeg binary. Leave blank to use the bundled ffmpeg-for-homebridge binary, falling back to 'ffmpeg' on your system PATH."
       }
     }
   }

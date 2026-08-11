@@ -13,10 +13,11 @@ This is a Homebridge plugin that allows you to control Centurion Garage Doors.
 
 ## Features
 
-- Open and close your Centurion Garage Door
+- Open, close, and stop your Centurion Garage Door
 - Monitor the status of your garage door
 - Control the Lock Mode
 - Turn the lights on and off
+- Live camera view and snapshots straight from the door's built-in camera
 - Integrates seamlessly with Homebridge
 
 ## Installation
@@ -44,13 +45,12 @@ You can find the deviceHostname and deviceLocalKey in the Local API section of t
 
 ## Camera Integration
 
-Centurion Garage Doors also come with a door camera, which operates on port `88`. Camera functionality is not included in this plugin. However, you can use the [Homebridge Camera FFmpeg](https://github.com/homebridge-plugins/homebridge-camera-ffmpeg) plugin to integrate the camera into Homebridge. 
+Centurion Garage Doors also come with a door camera, exposed as an MJPEG stream on port `88`. This plugin handles it natively — live view and snapshots show up directly on the garage door accessory in the Home app, no separate camera plugin required.
 
-To configure the camera, set the Homebridge Camera FFmpeg `Video Source` parameter to:
+Camera support is on by default and requires `ffmpeg` to transcode the stream for HomeKit. A static build is bundled automatically via [`ffmpeg-for-homebridge`](https://github.com/homebridge/ffmpeg-for-homebridge); if that's unavailable for your platform, install `ffmpeg` yourself and it'll be picked up from your system `PATH`. Two optional config fields:
 
-```text
--f mjpeg -i http://[DEVICE_HOSTNAME|IP_ADDRESS]:88:0 -map 0:v
-```
+- `enableCamera` (boolean, default `true`) — set to `false` to disable the camera entirely
+- `videoProcessor` (string) — path to a specific `ffmpeg` binary, overriding the bundled/PATH lookup
 
 ## Development
 

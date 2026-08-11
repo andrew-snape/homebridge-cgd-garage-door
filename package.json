@@ -37,6 +37,9 @@
     "homebridge",
     "centurion-garage-doors"
   ],
+  "dependencies": {
+    "ffmpeg-for-homebridge": "^2.2.2"
+  },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@semantic-release/changelog": "^6.0.3",

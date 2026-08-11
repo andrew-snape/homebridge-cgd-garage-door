@@ -1,6 +1,14 @@
 import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge';
+import { H264Level, H264Profile, SRTPCryptoSuites } from 'homebridge';
+import pathToFfmpeg from 'ffmpeg-for-homebridge';
+import { CGDCameraStreamingDelegate } from './CGDCameraStreamingDelegate.js';
 import { CGDGarageDoor } from './CGDGarageDoor.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
+
+interface CameraOptions {
+  enableCamera: boolean;
+  videoProcessor?: string;
+}
 
 export class CGDCameraPlatform implements DynamicPlatformPlugin {
   private readonly log: Logging;
@@ -14,7 +22,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     this.log('Platform finished initializing!');
 
-    const { deviceHostname, deviceLocalKey } = config;
+    const { deviceHostname, deviceLocalKey, enableCamera = true, videoProcessor } = config;
     if (!deviceHostname || !deviceLocalKey) {
       this.log.warn('Missing required configuration parameters');
       return;
@@ -27,7 +35,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     api.on('didFinishLaunching', () => {
       this.log('Did finish launching');
-      this.addAccessory(deviceHostname, cgdGarageDoor);
+      this.addAccessory(deviceHostname, cgdGarageDoor, { enableCamera, videoProcessor });
     });
   }
 
@@ -36,7 +44,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
-  async addAccessory(name: string, cgdGarageDoor: CGDGarageDoor) {
+  async addAccessory(name: string, cgdGarageDoor: CGDGarageDoor, cameraOptions: CameraOptions) {
     await cgdGarageDoor.waitForStatus();
 
     this.log('Adding new accessory with name %s', name);
@@ -46,17 +54,22 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const existingAccessory = this.accessories.find((accessory) => accessory.UUID === uuid);
     if (existingAccessory) {
       this.log('Accessory with name %s already exists', name);
-      this.configureGarageDoorAccessory(existingAccessory, cgdGarageDoor);
+      this.configureGarageDoorAccessory(existingAccessory, cgdGarageDoor, name, cameraOptions);
       return;
     }
 
     const accessory = new this.api.platformAccessory(name, uuid);
-    this.configureGarageDoorAccessory(accessory, cgdGarageDoor);
+    this.configureGarageDoorAccessory(accessory, cgdGarageDoor, name, cameraOptions);
     this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     this.log('Accessory with name %s added', name);
   }
 
-  configureGarageDoorAccessory(accessory: PlatformAccessory, cgdGarageDoor: CGDGarageDoor) {
+  configureGarageDoorAccessory(
+    accessory: PlatformAccessory,
+    cgdGarageDoor: CGDGarageDoor,
+    deviceHostname: string,
+    cameraOptions: CameraOptions,
+  ) {
     accessory.on('identify', () => {
       this.log('%s identified!', accessory.displayName);
     });
@@ -148,6 +161,46 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
         .getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getVacation());
     });
 
+    if (cameraOptions.enableCamera) {
+      this.configureCamera(accessory, deviceHostname, cameraOptions.videoProcessor);
+    }
+
     this.log('Garage Door Accessory %s configured!', accessory.displayName);
+  }
+
+  configureCamera(accessory: PlatformAccessory, deviceHostname: string, videoProcessor?: string) {
+    // Confirmed via `curl -v http://<device>:88/`: an unauthenticated MJPEG
+    // multipart stream (Content-Type: multipart/x-mixed-replace), no API key needed.
+    const videoSourceUrl = `http://${deviceHostname}:88/`;
+    const ffmpegPath = videoProcessor || pathToFfmpeg || 'ffmpeg';
+
+    const cameraDelegate = new CGDCameraStreamingDelegate(this.log, this.api, videoSourceUrl, ffmpegPath);
+
+    const cameraController = new this.api.hap.CameraController({
+      cameraStreamCount: 2,
+      delegate: cameraDelegate,
+      streamingOptions: {
+        supportedCryptoSuites: [SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
+        video: {
+          codec: {
+            profiles: [H264Profile.BASELINE, H264Profile.MAIN, H264Profile.HIGH],
+            levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
+          },
+          resolutions: [
+            [1280, 720, 30],
+            [1024, 768, 30],
+            [640, 480, 30],
+            [320, 240, 30],
+            [320, 240, 15],
+          ],
+        },
+        // No audio: the device has no microphone.
+      },
+    });
+
+    cameraDelegate.controller = cameraController;
+    accessory.configureController(cameraController);
+
+    this.log(`Camera configured for %s (source: ${videoSourceUrl}, ffmpeg: ${ffmpegPath})`, accessory.displayName);
   }
 }
