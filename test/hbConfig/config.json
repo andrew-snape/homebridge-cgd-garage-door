@@ -7,7 +7,7 @@
   },
   "description": "Local test bridge for homebridge-cgd-garage-door development",
   "plugins": [
-    "@snapeos/homebridge-cgd-garage-door",
+    "@snapeos/homebridge-centurion-garage-door",
     "homebridge-config-ui-x"
   ],
   "platforms": [
@@ -23,7 +23,7 @@
       "debug": false
     },
     {
-      "name": "homebridge-cgd-garage-door",
+      "name": "homebridge-centurion-garage-door",
       "platform": "CGDGarageDoor",
       "deviceHostname": "<DEVICE_HOSTNAME|IP_ADDRESS>",
       "deviceLocalKey": "<DEVICE_LOCAL_KEY>"
