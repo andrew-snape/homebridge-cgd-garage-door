@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.2.0...v1.3.0) (2026-08-11)
+
+
+### Features
+
+* add native live camera streaming and snapshots ([f379b76](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/f379b7635e526e965998b8b31f5aa4269232fac2))
+
 # [1.2.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.1.0...v1.2.0) (2026-08-10)
 
 
