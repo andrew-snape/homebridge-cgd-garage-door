@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.0...v1.4.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* prevent unhandled rejections and a stuck update-lock in device commands ([5f54fb5](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/5f54fb59431103cc30326b52eb80f4697e3ad607))
+
 # [1.4.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.3.0...v1.4.0) (2026-08-11)
 
 
