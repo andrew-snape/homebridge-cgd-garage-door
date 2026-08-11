@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.3.0...v1.4.0) (2026-08-11)
+
+
+### Features
+
+* rename package for discoverability ([3f8549f](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/3f8549fa645363bc9a1180be726d68293af477fe))
+
 # [1.3.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.2.0...v1.3.0) (2026-08-11)
 
 
