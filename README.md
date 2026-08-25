@@ -43,6 +43,20 @@ Add the following to your Homebridge config.json:
 
 You can find the deviceHostname and deviceLocalKey in the Local API section of the [MY CGD SMARTPHONE APP](https://www.cgdoors.com.au/garage-door-smartphone-app/).
 
+## Vacation Mode & Stop Switches
+
+Alongside the garage door and light, two `Switch` tiles are exposed:
+
+- **Vacation Mode** — locks out the door's wireless remote transmitters (handheld clickers), so it won't respond to them until you turn it back off. Useful when you're away and want to rule out a lost or cloned remote as a way in — the door can still be opened from HomeKit/Siri or the CGD app while it's on.
+- **Stop** — a momentary button that stops the door mid-travel (flips back off automatically after triggering).
+
+Both are on by default. Optional config fields let you hide or rename either one — handy if you have another accessory with a clashing name in the same home:
+
+- `enableVacationSwitch` (boolean, default `true`)
+- `vacationSwitchName` (string, default `"Vacation Mode"`)
+- `enableStopSwitch` (boolean, default `true`)
+- `stopSwitchName` (string, default `"Stop"`)
+
 ## Camera Integration
 
 Centurion Garage Doors also come with a door camera, exposed as an MJPEG stream on port `88`. This plugin handles it natively — live view and snapshots show up directly on the garage door accessory in the Home app, no separate camera plugin required.

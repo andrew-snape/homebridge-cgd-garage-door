@@ -10,6 +10,15 @@ interface CameraOptions {
   videoProcessor?: string;
 }
 
+interface SwitchOptions {
+  enableVacationSwitch: boolean;
+  vacationSwitchName: string;
+  enableStopSwitch: boolean;
+  stopSwitchName: string;
+}
+
+type AccessoryOptions = CameraOptions & SwitchOptions;
+
 export class CGDCameraPlatform implements DynamicPlatformPlugin {
   private readonly log: Logging;
   private readonly api: API;
@@ -22,7 +31,12 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     this.log('Platform finished initializing!');
 
-    const { deviceHostname, deviceLocalKey, enableCamera = true, videoProcessor } = config;
+    const {
+      deviceHostname, deviceLocalKey,
+      enableCamera = true, videoProcessor,
+      enableVacationSwitch = true, vacationSwitchName = 'Vacation Mode',
+      enableStopSwitch = true, stopSwitchName = 'Stop',
+    } = config;
     if (!deviceHostname || !deviceLocalKey) {
       this.log.warn('Missing required configuration parameters');
       return;
@@ -35,7 +49,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     api.on('didFinishLaunching', () => {
       this.log('Did finish launching');
-      this.addAccessory(deviceHostname, cgdGarageDoor, { enableCamera, videoProcessor });
+      this.addAccessory(deviceHostname, cgdGarageDoor, {
+        enableCamera, videoProcessor,
+        enableVacationSwitch, vacationSwitchName,
+        enableStopSwitch, stopSwitchName,
+      });
     });
   }
 
@@ -44,7 +62,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
-  async addAccessory(name: string, cgdGarageDoor: CGDGarageDoor, cameraOptions: CameraOptions) {
+  async addAccessory(name: string, cgdGarageDoor: CGDGarageDoor, options: AccessoryOptions) {
     await cgdGarageDoor.waitForStatus();
 
     this.log('Adding new accessory with name %s', name);
@@ -54,12 +72,12 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const existingAccessory = this.accessories.find((accessory) => accessory.UUID === uuid);
     if (existingAccessory) {
       this.log('Accessory with name %s already exists', name);
-      this.configureGarageDoorAccessory(existingAccessory, cgdGarageDoor, name, cameraOptions);
+      this.configureGarageDoorAccessory(existingAccessory, cgdGarageDoor, name, options);
       return;
     }
 
     const accessory = new this.api.platformAccessory(name, uuid);
-    this.configureGarageDoorAccessory(accessory, cgdGarageDoor, name, cameraOptions);
+    this.configureGarageDoorAccessory(accessory, cgdGarageDoor, name, options);
     this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     this.log('Accessory with name %s added', name);
   }
@@ -68,7 +86,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     accessory: PlatformAccessory,
     cgdGarageDoor: CGDGarageDoor,
     deviceHostname: string,
-    cameraOptions: CameraOptions,
+    options: AccessoryOptions,
   ) {
     accessory.on('identify', () => {
       this.log('%s identified!', accessory.displayName);
@@ -114,34 +132,51 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
       accessory.removeService(legacySwitch);
     }
 
-    const vacationSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'vacation')
-      || accessory.addService(new this.api.hap.Service.Switch('Vacation Mode', 'vacation'));
+    const existingVacationSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'vacation');
+    const vacationSwitch = options.enableVacationSwitch
+      ? existingVacationSwitch
+        || accessory.addService(new this.api.hap.Service.Switch(options.vacationSwitchName, 'vacation'))
+      : undefined;
 
-    vacationSwitch.getCharacteristic(this.api.hap.Characteristic.On)
-      .onGet(() => cgdGarageDoor.getVacation())
-      .onSet((value) => cgdGarageDoor.setVacation(value));
+    if (vacationSwitch) {
+      vacationSwitch.setCharacteristic(this.api.hap.Characteristic.Name, options.vacationSwitchName);
+      vacationSwitch.getCharacteristic(this.api.hap.Characteristic.On)
+        .onGet(() => cgdGarageDoor.getVacation())
+        .onSet((value) => cgdGarageDoor.setVacation(value));
+    } else if (existingVacationSwitch) {
+      accessory.removeService(existingVacationSwitch);
+    }
 
-    const stopSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'stop')
-      || accessory.addService(new this.api.hap.Service.Switch('Stop', 'stop'));
+    const existingStopSwitch = accessory.getServiceById(this.api.hap.Service.Switch, 'stop');
+    const stopSwitch = options.enableStopSwitch
+      ? existingStopSwitch
+        || accessory.addService(new this.api.hap.Service.Switch(options.stopSwitchName, 'stop'))
+      : undefined;
 
-    // Modeled as a momentary button: HomeKit's GarageDoorOpener has no native
-    // "stop" action (TargetDoorState only supports open/closed), and the device
-    // has no persistent "stopped" toggle state to read back — it's a one-shot
-    // command. Flipping back off shortly after makes it behave like a button
-    // rather than a switch that gets stuck "on".
-    stopSwitch.getCharacteristic(this.api.hap.Characteristic.On)
-      .onGet(() => false)
-      .onSet(async (value) => {
-        if (!value) {
-          return;
-        }
+    if (stopSwitch) {
+      stopSwitch.setCharacteristic(this.api.hap.Characteristic.Name, options.stopSwitchName);
 
-        await cgdGarageDoor.triggerStop();
+      // Modeled as a momentary button: HomeKit's GarageDoorOpener has no native
+      // "stop" action (TargetDoorState only supports open/closed), and the device
+      // has no persistent "stopped" toggle state to read back — it's a one-shot
+      // command. Flipping back off shortly after makes it behave like a button
+      // rather than a switch that gets stuck "on".
+      stopSwitch.getCharacteristic(this.api.hap.Characteristic.On)
+        .onGet(() => false)
+        .onSet(async (value) => {
+          if (!value) {
+            return;
+          }
 
-        setTimeout(() => {
-          stopSwitch.getCharacteristic(this.api.hap.Characteristic.On).updateValue(false);
-        }, 1000);
-      });
+          await cgdGarageDoor.triggerStop();
+
+          setTimeout(() => {
+            stopSwitch.getCharacteristic(this.api.hap.Characteristic.On).updateValue(false);
+          }, 1000);
+        });
+    } else if (existingStopSwitch) {
+      accessory.removeService(existingStopSwitch);
+    }
 
     cgdGarageDoor.onStatusUpdate(() => {
       garageDoorOpener
@@ -158,11 +193,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
         .getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getLightbulb());
 
       vacationSwitch
-        .getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getVacation());
+        ?.getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getVacation());
     });
 
-    if (cameraOptions.enableCamera) {
-      this.configureCamera(accessory, deviceHostname, cgdGarageDoor, cameraOptions.videoProcessor);
+    if (options.enableCamera) {
+      this.configureCamera(accessory, deviceHostname, cgdGarageDoor, options.videoProcessor);
     }
 
     this.log('Garage Door Accessory %s configured!', accessory.displayName);

@@ -31,6 +31,30 @@
         "title": "Video Processor Path",
         "type": "string",
         "description": "Path to an ffmpeg binary. Leave blank to use the bundled ffmpeg-for-homebridge binary, falling back to 'ffmpeg' on your system PATH."
+      },
+      "enableVacationSwitch": {
+        "title": "Enable Vacation Mode Switch",
+        "type": "boolean",
+        "default": true,
+        "description": "Vacation Mode locks out the door's wireless remote transmitters (handheld clickers), so it won't respond to them until you turn it back off — useful when you're away and want to rule out a lost or cloned remote as a way in. The door can still be opened from HomeKit/Siri or the CGD app while it's on. Disable this to hide the switch tile in the Home app."
+      },
+      "vacationSwitchName": {
+        "title": "Vacation Mode Switch Name",
+        "type": "string",
+        "default": "Vacation Mode",
+        "description": "Customize this if you have another accessory named \"Vacation Mode\" in the same home."
+      },
+      "enableStopSwitch": {
+        "title": "Enable Stop Switch",
+        "type": "boolean",
+        "default": true,
+        "description": "A momentary button that stops the door mid-travel. Disable this to hide the switch tile in the Home app."
+      },
+      "stopSwitchName": {
+        "title": "Stop Switch Name",
+        "type": "string",
+        "default": "Stop",
+        "description": "Customize this if you have another accessory named \"Stop\" in the same home."
       }
     }
   }
