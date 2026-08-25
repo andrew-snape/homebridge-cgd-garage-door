@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.2...v1.5.0) (2026-08-25)
+
+
+### Features
+
+* allow hiding/renaming the Vacation Mode and Stop switches ([315bfa6](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/315bfa6ffac6dcb6a273ebe6c194b756a8f6825b))
+
 ## [1.4.2](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.1...v1.4.2) (2026-08-25)
 
 
