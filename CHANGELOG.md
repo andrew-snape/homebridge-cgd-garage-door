@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.1...v1.4.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* serialize camera snapshots against device status polling ([ee618d9](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/ee618d9c80795d44655d0257f0e681a743da6e9c))
+
 ## [1.4.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.0...v1.4.1) (2026-08-11)
 
 
