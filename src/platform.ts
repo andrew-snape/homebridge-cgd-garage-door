@@ -162,19 +162,21 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     });
 
     if (cameraOptions.enableCamera) {
-      this.configureCamera(accessory, deviceHostname, cameraOptions.videoProcessor);
+      this.configureCamera(accessory, deviceHostname, cgdGarageDoor, cameraOptions.videoProcessor);
     }
 
     this.log('Garage Door Accessory %s configured!', accessory.displayName);
   }
 
-  configureCamera(accessory: PlatformAccessory, deviceHostname: string, videoProcessor?: string) {
+  configureCamera(accessory: PlatformAccessory, deviceHostname: string, cgdGarageDoor: CGDGarageDoor, videoProcessor?: string) {
     // Confirmed via `curl -v http://<device>:88/`: an unauthenticated MJPEG
     // multipart stream (Content-Type: multipart/x-mixed-replace), no API key needed.
     const videoSourceUrl = `http://${deviceHostname}:88/`;
     const ffmpegPath = videoProcessor || pathToFfmpeg || 'ffmpeg';
 
-    const cameraDelegate = new CGDCameraStreamingDelegate(this.log, this.api, videoSourceUrl, ffmpegPath);
+    const cameraDelegate = new CGDCameraStreamingDelegate(
+      this.log, this.api, videoSourceUrl, ffmpegPath, cgdGarageDoor.withDeviceLock,
+    );
 
     const cameraController = new this.api.hap.CameraController({
       cameraStreamCount: 2,

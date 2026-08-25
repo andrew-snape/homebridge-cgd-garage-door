@@ -1,4 +1,5 @@
 import type { CharacteristicValue, Logging } from 'homebridge';
+import Mutex from './mutex.js';
 import parseDoorState, { DoorState } from './parseDoorState.js';
 import retry from './retry.js';
 
@@ -36,6 +37,10 @@ export class CGDGarageDoor {
   private statusUpdateListener?: StatusUpdateListener;
   private isUpdating = false;
   private runQ: { name: string; fn: () => Promise<unknown>}[] = [];
+  // The device only reliably handles one connection at a time — this
+  // serializes our own HTTP calls against each other and, via
+  // withDeviceLock, against the camera snapshot ffmpeg calls too.
+  private deviceMutex = new Mutex();
 
   constructor(log: Logging, config: Config) {
     this.log = log;
@@ -112,7 +117,7 @@ export class CGDGarageDoor {
         }
       }
 
-      return retry(async () => {
+      return this.deviceMutex.runExclusive(() => retry(async () => {
         this.log.debug(`Running command: ${cmd}=${value}`);
 
         const { deviceHostname, deviceLocalKey } = this.config;
@@ -163,7 +168,7 @@ export class CGDGarageDoor {
             this.statusUpdateListener?.();
           }
         },
-      });
+      }));
     };
 
     if (until) {
@@ -252,6 +257,10 @@ export class CGDGarageDoor {
   public onStatusUpdate = (listener: StatusUpdateListener) => {
     this.statusUpdateListener = listener;
   };
+
+  // Lets other consumers of the same device (the camera snapshot delegate)
+  // serialize their requests against ours instead of racing them.
+  public withDeviceLock = <T>(fn: () => Promise<T>): Promise<T> => this.deviceMutex.runExclusive(fn);
 
   public hasDeviceError = (): boolean => !!this.status?.error && this.status.error !== '0';
 

@@ -34,6 +34,10 @@ interface OngoingSession {
 const H264_PROFILE_NAMES = ['baseline', 'main', 'high'];
 const H264_LEVEL_NAMES = ['3.1', '3.2', '4.0'];
 
+// A hung device (or a hung ffmpeg process, e.g. mid-reconnect) should surface
+// as a failed snapshot, not a request that never calls back.
+const SNAPSHOT_TIMEOUT_MS = 10000;
+
 export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
   // Set by the platform right after constructing the CameraController, so a
   // crashed ffmpeg process can tell HAP to tear down the session it broke.
@@ -48,6 +52,9 @@ export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
     private readonly api: API,
     private readonly videoSourceUrl: string,
     private readonly videoProcessor: string,
+    // Serializes snapshot requests against the garage door's own status
+    // polling — the device only reliably handles one connection at a time.
+    private readonly deviceLock: <T>(fn: () => Promise<T>) => Promise<T>,
   ) {}
 
   private allocatePort = (): number => {
@@ -60,6 +67,13 @@ export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
   };
 
   public handleSnapshotRequest = (request: SnapshotRequest, callback: SnapshotRequestCallback): void => {
+    this.deviceLock(() => this.runSnapshot(request)).then(
+      (buffer) => callback(undefined, buffer),
+      (error) => callback(error instanceof Error ? error : new Error(String(error))),
+    );
+  };
+
+  private runSnapshot = (request: SnapshotRequest): Promise<Buffer> => new Promise((resolve, reject) => {
     const args = [
       '-i', this.videoSourceUrl,
       '-frames:v', '1',
@@ -70,29 +84,48 @@ export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
 
     const ffmpeg = spawn(this.videoProcessor, args, { env: process.env });
     const chunks: Buffer[] = [];
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      settled = true;
+      ffmpeg.kill('SIGKILL');
+      reject(new Error('[Camera Snapshot] Timed out waiting for a frame'));
+    }, SNAPSHOT_TIMEOUT_MS);
 
     ffmpeg.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
     ffmpeg.stderr.on('data', (data: Buffer) => this.log.debug(`[Camera Snapshot] ${data.toString('utf8')}`));
 
     ffmpeg.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+
       this.log.error(`[Camera Snapshot] Failed to start ffmpeg: ${error.message}`);
-      callback(error);
+      reject(error);
     });
 
     ffmpeg.on('exit', (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+
       if (signal) {
-        callback(new Error(`Snapshot process was killed with signal ${signal}`));
+        reject(new Error(`Snapshot process was killed with signal ${signal}`));
         return;
       }
 
       if (code !== 0) {
-        callback(new Error(`Snapshot process exited with code ${code}`));
+        reject(new Error(`Snapshot process exited with code ${code}`));
         return;
       }
 
-      callback(undefined, Buffer.concat(chunks));
+      resolve(Buffer.concat(chunks));
     });
-  };
+  });
 
   public prepareStream = (request: PrepareStreamRequest, callback: PrepareStreamCallback): void => {
     const localVideoPort = this.allocatePort();
