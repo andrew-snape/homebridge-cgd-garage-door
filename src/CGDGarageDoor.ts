@@ -118,7 +118,9 @@ export class CGDGarageDoor {
         const { deviceHostname, deviceLocalKey } = this.config;
         // Node's built-in fetch (undici) keeps connections alive by default,
         // so no custom keep-alive agent is required.
-        const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`);
+        const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
+          signal: AbortSignal.timeout(5000),
+        });
 
         const data = await response.json();
 
@@ -138,6 +140,9 @@ export class CGDGarageDoor {
           this.log.warn(`Failed to run command [${retries} retries]: ${cmd}=${value}`);
           if (error instanceof Error) {
             this.log.warn(`Error: ${error.message}`);
+            if (error.cause) {
+              this.log.warn(`Cause: ${String(error.cause)}`);
+            }
           }
         },
         onRecover: (retries) => {
@@ -147,6 +152,9 @@ export class CGDGarageDoor {
           this.log.error(`Failed to run command: ${cmd}=${value}`);
           if (error instanceof Error) {
             this.log.error(`Error: ${error.message}`);
+            if (error.cause) {
+              this.log.error(`Cause: ${String(error.cause)}`);
+            }
           }
 
           if (oldStatus) {

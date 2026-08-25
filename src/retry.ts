@@ -7,6 +7,12 @@ interface Config {
   onFail: (error: unknown) => void;
 }
 
+// Gives a struggling/overloaded device a moment to recover instead of
+// hammering it with back-to-back retries.
+const RETRY_DELAY_MS = 1500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const retry = async (fn: () => Promise<unknown>, config: Config) => {
   const { until, retries, onRetry, onRecover, onFail, isRetry } = config;
 
@@ -28,6 +34,7 @@ const retry = async (fn: () => Promise<unknown>, config: Config) => {
     }
 
     onRetry(error, retries);
+    await sleep(RETRY_DELAY_MS);
 
     return retry(fn, {
       ...config,
