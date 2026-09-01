@@ -36,6 +36,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
       enableCamera = true, videoProcessor,
       enableVacationSwitch = true, vacationSwitchName = 'Vacation Mode',
       enableStopSwitch = true, stopSwitchName = 'Stop',
+      transitionTimeoutSeconds,
     } = config;
     if (!deviceHostname || !deviceLocalKey) {
       this.log.warn('Missing required configuration parameters');
@@ -45,6 +46,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const cgdGarageDoor = new CGDGarageDoor(this.log, {
       deviceHostname,
       deviceLocalKey,
+      transitionTimeoutSeconds,
     });
 
     api.on('didFinishLaunching', () => {
