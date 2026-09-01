@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.0...v1.5.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* add transitional state watchdog to prevent stuck Opening/Closing status ([0cbf7a2](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/0cbf7a2bcd6910a051a111bed752edf026ae4d91))
+
 # [1.5.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.4.2...v1.5.0) (2026-08-25)
 
 
