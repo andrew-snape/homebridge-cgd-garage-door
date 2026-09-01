@@ -18,6 +18,7 @@ interface Status {
 interface Config {
   deviceHostname: string;
   deviceLocalKey: string;
+  transitionTimeoutSeconds?: number;
 }
 
 type StatusUpdateListener = () => void;
@@ -37,6 +38,7 @@ export class CGDGarageDoor {
   private statusUpdateListener?: StatusUpdateListener;
   private isUpdating = false;
   private runQ: { name: string; fn: () => Promise<unknown>}[] = [];
+  private transitionStartedAt?: number;
   // The device only reliably handles one connection at a time — this
   // serializes our own HTTP calls against each other and, via
   // withDeviceLock, against the camera snapshot ffmpeg calls too.
@@ -113,6 +115,18 @@ export class CGDGarageDoor {
 
         if (!this.isStatusEqual(oldStatus)) {
           this.log.debug(`Updating ${cmd} to ${softValue}`);
+
+          // Start the transition watchdog when we optimistically enter a transitional state.
+          if (cmd === 'door') {
+            const doorState = parseDoorState(softValue);
+            if (doorState === DoorState.Opening || doorState === DoorState.Closing) {
+              this.transitionStartedAt = Date.now();
+              this.log.debug(`Transitional state started (optimistic): ${softValue}`);
+            } else {
+              this.transitionStartedAt = undefined;
+            }
+          }
+
           this.statusUpdateListener?.();
         }
       }
@@ -227,12 +241,31 @@ export class CGDGarageDoor {
     const status = await this.getStatus();
     if (this.isStatusEqual(status)) {
       this.log.debug('Skip updating status because it is equal');
+
+      // Still check for transition timeout even when status hasn't changed.
+      if (this.checkTransitionTimeout()) {
+        return;
+      }
+
       return;
     }
 
     if (this.isUpdating) {
       this.log.info('Skip updating status because it is updating');
       return;
+    }
+
+    // Track when a transitional state begins.
+    const newDoorState = parseDoorState(status?.door);
+    const oldDoorState = parseDoorState(this.status?.door);
+    const isNewStateTransitional = newDoorState === DoorState.Opening || newDoorState === DoorState.Closing;
+    const wasTransitional = oldDoorState === DoorState.Opening || oldDoorState === DoorState.Closing;
+
+    if (isNewStateTransitional && !wasTransitional) {
+      this.transitionStartedAt = Date.now();
+      this.log.debug(`Transitional state started: ${status?.door}`);
+    } else if (!isNewStateTransitional) {
+      this.transitionStartedAt = undefined;
     }
 
     this.status = status;
@@ -242,6 +275,38 @@ export class CGDGarageDoor {
     }
 
     this.statusUpdateListener?.();
+  };
+
+  // Returns true if a timeout override was applied (caller should return early).
+  private checkTransitionTimeout = (): boolean => {
+    if (!this.transitionStartedAt) {
+      return false;
+    }
+
+    const configuredSeconds = this.config.transitionTimeoutSeconds ?? 60;
+    if (configuredSeconds === 0) {
+      return false;
+    }
+
+    const timeoutMs = configuredSeconds * 1000;
+    const elapsed = Date.now() - this.transitionStartedAt;
+
+    if (elapsed < timeoutMs) {
+      return false;
+    }
+
+    this.log.warn(
+      `Door has been in transitional state (${this.status?.door}) for ${Math.round(elapsed / 1000)}s — resetting to Stopped`,
+    );
+
+    this.transitionStartedAt = undefined;
+
+    if (this.status) {
+      this.status = { ...this.status, door: 'Stopped' };
+      this.statusUpdateListener?.();
+    }
+
+    return true;
   };
 
   private isStatusEqual = (data?: Status) => {

@@ -55,6 +55,12 @@
         "type": "string",
         "default": "Stop",
         "description": "Customize this if you have another accessory named \"Stop\" in the same home."
+      },
+      "transitionTimeoutSeconds": {
+        "title": "Transition Timeout (seconds)",
+        "type": "integer",
+        "default": 60,
+        "description": "How long (in seconds) the door can stay in a transitional state (Opening or Closing) before the plugin considers it stuck and resets the displayed state to Stopped. Increase this if your door takes longer than 60 seconds to travel. Set to 0 to disable the watchdog."
       }
     }
   }
