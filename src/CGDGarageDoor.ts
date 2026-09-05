@@ -39,6 +39,13 @@ export class CGDGarageDoor {
   private isUpdating = false;
   private runQ: { name: string; fn: () => Promise<unknown>}[] = [];
   private transitionStartedAt?: number;
+  // The raw door value last reported by the device, tracked separately from
+  // `status.door` (which the transition watchdog below may override to
+  // 'Stopped' for display). Without this, a device stuck reporting the same
+  // Opening/Closing value forever would look "freshly transitional" again on
+  // every poll once its displayed state got overridden, and the watchdog
+  // would flap instead of sticking.
+  private lastRawDoorValue?: string;
   // The device only reliably handles one connection at a time — this
   // serializes our own HTTP calls against each other and, via
   // withDeviceLock, against the camera snapshot ffmpeg calls too.
@@ -179,6 +186,7 @@ export class CGDGarageDoor {
           if (oldStatus) {
             this.log.debug(`Reverting ${cmd}`);
             this.status = oldStatus;
+            this.transitionStartedAt = undefined;
             this.statusUpdateListener?.();
           }
         },
@@ -239,13 +247,11 @@ export class CGDGarageDoor {
     }
 
     const status = await this.getStatus();
-    if (this.isStatusEqual(status)) {
-      this.log.debug('Skip updating status because it is equal');
-
-      // Still check for transition timeout even when status hasn't changed.
-      if (this.checkTransitionTimeout()) {
-        return;
-      }
+    if (!status) {
+      // A failed poll (network hiccup, device busy, etc.) is not the same as
+      // the door having no state — keep displaying the last known-good status
+      // rather than wiping it out from under the accessory.
+      this.log.error('Skip updating status because the device did not respond');
 
       return;
     }
@@ -255,20 +261,37 @@ export class CGDGarageDoor {
       return;
     }
 
-    // Track when a transitional state begins.
-    const newDoorState = parseDoorState(status?.door);
-    const oldDoorState = parseDoorState(this.status?.door);
-    const isNewStateTransitional = newDoorState === DoorState.Opening || newDoorState === DoorState.Closing;
-    const wasTransitional = oldDoorState === DoorState.Opening || oldDoorState === DoorState.Closing;
+    // Track continuity of the *real* device-reported door value, independent of
+    // whatever we end up displaying (the watchdog below may override it to
+    // 'Stopped'). Comparing against the displayed value instead would make a
+    // device that's genuinely stuck reporting the same Opening/Closing value
+    // look "freshly transitional" again on every poll once overridden, so the
+    // watchdog would flap between Stopped and Opening/Closing forever instead
+    // of sticking.
+    const rawDoorChanged = status.door !== this.lastRawDoorValue;
+    this.lastRawDoorValue = status.door;
 
-    if (isNewStateTransitional && !wasTransitional) {
-      this.transitionStartedAt = Date.now();
-      this.log.debug(`Transitional state started: ${status?.door}`);
-    } else if (!isNewStateTransitional) {
-      this.transitionStartedAt = undefined;
+    const doorState = parseDoorState(status.door);
+    const isTransitional = doorState === DoorState.Opening || doorState === DoorState.Closing;
+
+    if (rawDoorChanged) {
+      if (isTransitional) {
+        this.transitionStartedAt = Date.now();
+        this.log.debug(`Transitional state started: ${status.door}`);
+      } else {
+        this.transitionStartedAt = undefined;
+      }
     }
 
-    this.status = status;
+    const displayStatus = this.applyTransitionTimeout(status, isTransitional);
+
+    if (this.isStatusEqual(displayStatus)) {
+      this.log.debug('Skip updating status because it is equal');
+
+      return;
+    }
+
+    this.status = displayStatus;
 
     if (this.hasDeviceError()) {
       this.log.warn(`CGD device reported error code ${this.status?.error}`);
@@ -277,36 +300,33 @@ export class CGDGarageDoor {
     this.statusUpdateListener?.();
   };
 
-  // Returns true if a timeout override was applied (caller should return early).
-  private checkTransitionTimeout = (): boolean => {
-    if (!this.transitionStartedAt) {
-      return false;
+  // Once a transitional state has persisted too long, override the displayed
+  // door value to 'Stopped' so a device stuck reporting Opening/Closing
+  // forever doesn't leave HomeKit spinning indefinitely. The override sticks
+  // (elapsed only grows) until the device reports a different raw door value,
+  // which clears transitionStartedAt above and lets the real value through.
+  private applyTransitionTimeout = (status: Status, isTransitional: boolean): Status => {
+    if (!isTransitional || !this.transitionStartedAt) {
+      return status;
     }
 
     const configuredSeconds = this.config.transitionTimeoutSeconds ?? 60;
     if (configuredSeconds === 0) {
-      return false;
+      return status;
     }
 
-    const timeoutMs = configuredSeconds * 1000;
     const elapsed = Date.now() - this.transitionStartedAt;
-
-    if (elapsed < timeoutMs) {
-      return false;
+    if (elapsed < configuredSeconds * 1000) {
+      return status;
     }
 
-    this.log.warn(
-      `Door has been in transitional state (${this.status?.door}) for ${Math.round(elapsed / 1000)}s — resetting to Stopped`,
-    );
-
-    this.transitionStartedAt = undefined;
-
-    if (this.status) {
-      this.status = { ...this.status, door: 'Stopped' };
-      this.statusUpdateListener?.();
+    if (this.status?.door !== 'Stopped') {
+      this.log.warn(
+        `Door has been in transitional state (${status.door}) for ${Math.round(elapsed / 1000)}s — resetting to Stopped`,
+      );
     }
 
-    return true;
+    return { ...status, door: 'Stopped' };
   };
 
   private isStatusEqual = (data?: Status) => {
