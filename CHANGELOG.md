@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.1...v1.5.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* prevent transition watchdog from flapping on a permanently stuck door status ([09f597c](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/09f597c6465a35b6c350b7c18acc52a5fa934261))
+
 ## [1.5.1](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.0...v1.5.1) (2026-09-01)
 
 
