@@ -102,6 +102,33 @@ export class CGDGarageDoor {
     }
   };
 
+  // A single, bare HTTP round-trip to the device — no mutex, no retry. Callers
+  // that need serialization against other device traffic (camera snapshots,
+  // other commands) must wrap this in deviceMutex.runExclusive themselves;
+  // see the note on `until` below for why the mutex can't just be baked in here.
+  private fetchDevice = async (cmd: string, value: string): Promise<unknown> => {
+    this.log.debug(`Running command: ${cmd}=${value}`);
+
+    const { deviceHostname, deviceLocalKey } = this.config;
+    // Node's built-in fetch (undici) keeps connections alive by default,
+    // so no custom keep-alive agent is required.
+    const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    const data = await response.json();
+
+    const level = response.ok ? 'debug' : 'error';
+    this.log[level](response.status.toString());
+    this.log[level](JSON.stringify(data));
+
+    if (!response.ok) {
+      throw new Error(`Fetch failed with status ${response.status}, ${JSON.stringify(data)}`);
+    }
+
+    return data;
+  };
+
   private run = async ({
     cmd, value,
     softValue = value,
@@ -138,28 +165,7 @@ export class CGDGarageDoor {
         }
       }
 
-      return this.deviceMutex.runExclusive(() => retry(async () => {
-        this.log.debug(`Running command: ${cmd}=${value}`);
-
-        const { deviceHostname, deviceLocalKey } = this.config;
-        // Node's built-in fetch (undici) keeps connections alive by default,
-        // so no custom keep-alive agent is required.
-        const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
-          signal: AbortSignal.timeout(5000),
-        });
-
-        const data = await response.json();
-
-        const level = response.ok ? 'debug' : 'error';
-        this.log[level](response.status.toString());
-        this.log[level](JSON.stringify(data));
-
-        if (!response.ok) {
-          throw new Error(`Fetch failed with status ${response.status}, ${JSON.stringify(data)}`);
-        }
-
-        return data;
-      }, {
+      return this.deviceMutex.runExclusive(() => retry(() => this.fetchDevice(cmd, value), {
         until,
         retries: 3,
         onRetry: (error, retries) => {
@@ -212,10 +218,25 @@ export class CGDGarageDoor {
     }
   };
 
+  // `until` runs *inside* the retry() call that deviceMutex.runExclusive is
+  // already executing for the in-flight door/lamp/vacation command (see
+  // `run` below). deviceMutex isn't reentrant — it's just a promise chain —
+  // so calling back into deviceMutex.runExclusive from here (as going through
+  // the normal getStatus()/run() path would) would queue behind that very
+  // command's own still-pending promise and deadlock the whole device
+  // forever, hanging isUpdating as true until Homebridge is restarted. Since
+  // we're already serialized against other device traffic by virtue of
+  // running inside that command's exclusive section, check status directly.
   private until = (fn: (status: Status) => boolean) => async (): Promise<boolean> => {
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    const status = await this.getStatus();
+    let status: Status | undefined;
+    try {
+      status = await this.fetchDevice('status', 'json') as Status;
+    } catch (error) {
+      this.log.warn(`Failed to check status while waiting: ${error}`);
+    }
+
     this.log.debug(`Checking status... ${JSON.stringify(status)}`);
 
     return !!status && fn(status);
