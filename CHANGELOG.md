@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.2...v1.5.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* stop the device mutex deadlocking against itself during open/close commands ([8339f30](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/8339f300da783449efe3a03a935b46c12f33f397))
+
 ## [1.5.2](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.1...v1.5.2) (2026-09-06)
 
 
