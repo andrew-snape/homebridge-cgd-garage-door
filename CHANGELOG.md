@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.3...v1.6.0) (2026-10-25)
+
+
+### Features
+
+* adaptive polling, signal warnings and No Response state ([7b8b520](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/7b8b52081d4d42428be891d7a66468ed97c984c8))
+
 ## [1.5.3](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.2...v1.5.3) (2026-09-08)
 
 
