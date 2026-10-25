@@ -2,7 +2,8 @@ import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformCo
 import { H264Level, H264Profile, SRTPCryptoSuites } from 'homebridge';
 import pathToFfmpeg from 'ffmpeg-for-homebridge';
 import { CGDCameraStreamingDelegate } from './CGDCameraStreamingDelegate.js';
-import { CGDGarageDoor } from './CGDGarageDoor.js';
+import { CGDGarageDoor, POLL_IDLE_MS, POLL_TRANSITION_MS, UNREACHABLE_AFTER_FAILURES } from './CGDGarageDoor.js';
+import { readNumber } from './config.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 interface CameraOptions {
@@ -36,7 +37,6 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
       enableCamera = true, videoProcessor,
       enableVacationSwitch = true, vacationSwitchName = 'Vacation Mode',
       enableStopSwitch = true, stopSwitchName = 'Stop',
-      transitionTimeoutSeconds,
     } = config;
     if (!deviceHostname || !deviceLocalKey) {
       this.log.warn('Missing required configuration parameters');
@@ -46,7 +46,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const cgdGarageDoor = new CGDGarageDoor(this.log, {
       deviceHostname,
       deviceLocalKey,
-      transitionTimeoutSeconds,
+      transitionTimeoutSeconds: readNumber(this.log, config, 'transitionTimeoutSeconds', 60, { min: 0 }),
+      pollIntervalSeconds: readNumber(this.log, config, 'pollIntervalSeconds', POLL_IDLE_MS / 1000, { min: 1 }),
+      pollIntervalMovingSeconds: readNumber(this.log, config, 'pollIntervalMovingSeconds', POLL_TRANSITION_MS / 1000, { min: 0.5 }),
+      unreachableAfterFailures: readNumber(this.log, config, 'unreachableAfterFailures', UNREACHABLE_AFTER_FAILURES, { min: 1, integer: true }),
+      healthSummaryMinutes: readNumber(this.log, config, 'healthSummaryMinutes', 10, { min: 0 }),
     });
 
     api.on('didFinishLaunching', () => {

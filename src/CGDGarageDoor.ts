@@ -20,6 +20,12 @@ interface Config {
   deviceHostname: string;
   deviceLocalKey: string;
   transitionTimeoutSeconds?: number;
+  // The poll cadence and thresholds below default to the constants further down.
+  pollIntervalSeconds?: number;
+  pollIntervalMovingSeconds?: number;
+  unreachableAfterFailures?: number;
+  // 0 disables the periodic health summary.
+  healthSummaryMinutes?: number;
 }
 
 type StatusUpdateListener = () => void;
@@ -60,11 +66,11 @@ const DEFAULT_TIMINGS: Timings = {
 // Poll quickly while the door is moving so HomeKit tracks it, slowly when idle
 // to go easy on a device that only handles one connection at a time, and back
 // off exponentially while it isn't answering.
-const POLL_TRANSITION_MS = 1500;
-const POLL_IDLE_MS = 10000;
+export const POLL_TRANSITION_MS = 1500;
+export const POLL_IDLE_MS = 10000;
 const POLL_BACKOFF_MAX_MS = 60000;
 // Consecutive failed polls (the next poll is the retry) before HomeKit shows "No Response".
-const UNREACHABLE_AFTER_FAILURES = 3;
+export const UNREACHABLE_AFTER_FAILURES = 3;
 const WEAK_SIGNAL_DBM = -75;
 // Hysteresis so a signal hovering around the threshold doesn't log on every poll.
 const SIGNAL_RECOVERED_DBM = -70;
@@ -114,16 +120,22 @@ export class CGDGarageDoor {
   constructor(log: Logging, config: Config, options: Options = {}) {
     this.log = log;
     this.config = config;
-    this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
+    this.timings = {
+      ...DEFAULT_TIMINGS,
+      ...(config.healthSummaryMinutes === undefined ? {} : { healthIntervalMs: config.healthSummaryMinutes * 60000 }),
+      ...options.timings,
+    };
     this.health = new HealthSummary(options.now);
 
-    // unref'd so it never keeps the process (or a test run) alive on its own.
-    setInterval(() => {
-      const line = this.health.summarize();
-      if (line) {
-        this.log.info(line);
-      }
-    }, this.timings.healthIntervalMs).unref();
+    if (this.timings.healthIntervalMs > 0) {
+      // unref'd so it never keeps the process (or a test run) alive on its own.
+      setInterval(() => {
+        const line = this.health.summarize();
+        if (line) {
+          this.log.info(line);
+        }
+      }, this.timings.healthIntervalMs).unref();
+    }
 
     if (options.autoPoll ?? true) {
       this.poolStatus();
@@ -586,7 +598,7 @@ export class CGDGarageDoor {
       + (lastSignal ? ` (last reported Wi-Fi signal ${lastSignal} dBm)` : ''),
     );
 
-    if (!this.unreachable && this.consecutiveFailures >= UNREACHABLE_AFTER_FAILURES) {
+    if (!this.unreachable && this.consecutiveFailures >= (this.config.unreachableAfterFailures ?? UNREACHABLE_AFTER_FAILURES)) {
       this.unreachable = true;
       this.log.warn(`Device unreachable after ${this.consecutiveFailures} failed polls — reporting No Response`);
       this.statusUpdateListener?.();
@@ -620,15 +632,20 @@ export class CGDGarageDoor {
     }
   };
 
+  private pollIdleMs = () => (this.config.pollIntervalSeconds ?? POLL_IDLE_MS / 1000) * 1000;
+
   private nextPollDelay = (): number => {
     if (this.consecutiveFailures > 0) {
-      return Math.min(POLL_IDLE_MS * 2 ** (this.consecutiveFailures - 1), POLL_BACKOFF_MAX_MS);
+      const idleMs = this.pollIdleMs();
+      return Math.min(idleMs * 2 ** (this.consecutiveFailures - 1), Math.max(POLL_BACKOFF_MAX_MS, idleMs));
     }
 
     const doorState = parseDoorState(this.lastRawDoorValue);
     const moving = doorState === DoorState.Opening || doorState === DoorState.Closing;
 
-    return moving || this.isUpdating ? POLL_TRANSITION_MS : POLL_IDLE_MS;
+    return moving || this.isUpdating
+      ? (this.config.pollIntervalMovingSeconds ?? POLL_TRANSITION_MS / 1000) * 1000
+      : this.pollIdleMs();
   };
 
   private poolStatus = async () => {

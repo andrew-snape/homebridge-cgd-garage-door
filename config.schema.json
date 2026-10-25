@@ -60,7 +60,36 @@
         "title": "Transition Timeout (seconds)",
         "type": "integer",
         "default": 60,
-        "description": "How long (in seconds) the door can stay in a transitional state (Opening or Closing) before the plugin considers it stuck and resets the displayed state to Stopped. Increase this if your door takes longer than 60 seconds to travel. Set to 0 to disable the watchdog."
+        "description": "How long (in seconds) the door can stay in a transitional state (Opening or Closing) before the plugin considers it stuck and resets the displayed state to Stopped. Set it comfortably above your door's travel time (for example, a door that takes about 19 s to open and 13 s to close is fine at the default of 60). Set to 0 to disable the watchdog.",
+        "minimum": 0
+      },
+      "pollIntervalSeconds": {
+        "title": "Idle Poll Interval (seconds)",
+        "type": "number",
+        "default": 10,
+        "minimum": 1,
+        "description": "How often to check the door's status while it is idle. Lower values notice remote or wall-button use sooner but put more load on a device that only handles one connection at a time."
+      },
+      "pollIntervalMovingSeconds": {
+        "title": "Moving Poll Interval (seconds)",
+        "type": "number",
+        "default": 1.5,
+        "minimum": 0.5,
+        "description": "How often to check the door's status while it is opening or closing, so HomeKit tracks the movement."
+      },
+      "unreachableAfterFailures": {
+        "title": "Failed Polls Before No Response",
+        "type": "integer",
+        "default": 3,
+        "minimum": 1,
+        "description": "How many status checks in a row must fail before HomeKit shows the door as \"No Response\". Failed checks also back off exponentially (up to 60 seconds) so an unresponsive door isn't hammered."
+      },
+      "healthSummaryMinutes": {
+        "title": "Health Summary Interval (minutes)",
+        "type": "number",
+        "default": 10,
+        "minimum": 0,
+        "description": "How often to log a one-line health summary (poll success rate, latency, Wi-Fi signal, cycle count, last error). Set to 0 to disable."
       }
     }
   }
