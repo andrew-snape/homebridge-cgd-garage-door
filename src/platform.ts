@@ -46,11 +46,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const cgdGarageDoor = new CGDGarageDoor(this.log, {
       deviceHostname,
       deviceLocalKey,
-      transitionTimeoutSeconds: readNumber(this.log, config, 'transitionTimeoutSeconds', 60, { min: 0 }),
-      pollIntervalSeconds: readNumber(this.log, config, 'pollIntervalSeconds', POLL_IDLE_MS / 1000, { min: 1 }),
-      pollIntervalMovingSeconds: readNumber(this.log, config, 'pollIntervalMovingSeconds', POLL_TRANSITION_MS / 1000, { min: 0.5 }),
-      unreachableAfterFailures: readNumber(this.log, config, 'unreachableAfterFailures', UNREACHABLE_AFTER_FAILURES, { min: 1, integer: true }),
-      healthSummaryMinutes: readNumber(this.log, config, 'healthSummaryMinutes', 10, { min: 0 }),
+      transitionTimeoutSeconds: readNumber(this.log, config, 'transitionTimeoutSeconds', 60, { min: 0, max: 600 }),
+      pollIntervalSeconds: readNumber(this.log, config, 'pollIntervalSeconds', POLL_IDLE_MS / 1000, { min: 1, max: 3600 }),
+      pollIntervalMovingSeconds: readNumber(this.log, config, 'pollIntervalMovingSeconds', POLL_TRANSITION_MS / 1000, { min: 0.5, max: 60 }),
+      unreachableAfterFailures: readNumber(this.log, config, 'unreachableAfterFailures', UNREACHABLE_AFTER_FAILURES, { min: 1, max: 100, integer: true }),
+      healthSummaryMinutes: readNumber(this.log, config, 'healthSummaryMinutes', 10, { min: 0, max: 1440 }),
     });
 
     api.on('didFinishLaunching', () => {

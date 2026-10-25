@@ -164,7 +164,7 @@ test('weak Wi-Fi signal warns once and only recovers above the hysteresis thresh
 
 test('readNumber falls back to the default with one warning on invalid values', () => {
   const { log, lines } = captureLog();
-  const opts = { min: 1 };
+  const opts = { min: 1, max: 100 };
 
   assert.equal(readNumber(log, {}, 'k', 10, opts), 10);
   assert.equal(readNumber(log, { k: 5 }, 'k', 10, opts), 5);
@@ -172,11 +172,12 @@ test('readNumber falls back to the default with one warning on invalid values', 
 
   assert.equal(readNumber(log, { k: -3 }, 'k', 10, opts), 10);
   assert.equal(readNumber(log, { k: 'fast' }, 'k', 10, opts), 10);
-  assert.equal(readNumber(log, { k: 0.5 }, 'k', 10, { min: 1, integer: true }), 10);
+  assert.equal(readNumber(log, { k: 0.5 }, 'k', 10, { min: 1, max: 100, integer: true }), 10);
   assert.equal(readNumber(log, { k: Infinity }, 'k', 10, opts), 10);
   assert.equal(lines.length, 4);
   assert.ok(lines.every((l) => l.startsWith('warn:')));
-  assert.equal(readNumber(log, { k: 0 }, 'k', 10, { min: 0 }), 0);
+  assert.equal(readNumber(log, { k: 0 }, 'k', 10, { min: 0, max: 100 }), 0);
+  assert.equal(readNumber(log, { k: 101 }, 'k', 10, opts), 10, 'above the maximum');
 });
 
 test('the platform reports unknown state to HomeKit as a communication failure', () => {

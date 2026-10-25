@@ -116,3 +116,46 @@ test('the door logs a health line on the injected interval', async () => {
     device.restore();
   }
 });
+
+test('the device key never reaches the logs or the health line, even for a malformed hostname', async () => {
+  const device = installFakeDevice();
+  try {
+    const { log, lines } = captureLog();
+    const door = new CGDGarageDoor(log, { deviceHostname: 'bad host name', deviceLocalKey: 'secret-key-123' }, {
+      autoPoll: false,
+      timings: { retryDelayMs: 1, confirmIntervalMs: 5, healthIntervalMs: 30 },
+    });
+
+    await (door as unknown as { refreshStatus: () => Promise<void> }).refreshStatus();
+    await door.setLightbulb(true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.ok(lines.some((l) => l.includes('Health (')), 'a health line was logged');
+    assert.ok(lines.some((l) => l.startsWith('error:')), 'failures were logged');
+    assert.ok(lines.every((l) => !l.includes('secret-key-123')), lines.join('\n'));
+  } finally {
+    device.restore();
+  }
+});
+
+test('the health line reports only status-poll failures as the last error', async () => {
+  const device = installFakeDevice();
+  try {
+    const { log, lines } = captureLog();
+    const door = new CGDGarageDoor(log, { deviceHostname: 'device.test', deviceLocalKey: 'k' }, {
+      autoPoll: false,
+      timings: { retryDelayMs: 1, confirmIntervalMs: 5, healthIntervalMs: 80 },
+    });
+    const refresh = () => (door as unknown as { refreshStatus: () => Promise<void> }).refreshStatus();
+
+    await refresh();
+    device.failWhen = (request) => request.startsWith('lamp=');
+    await door.setLightbulb(true);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const health = lines.find((l) => l.includes('Health ('));
+    assert.ok(health && !health.includes('last error'), health);
+  } finally {
+    device.restore();
+  }
+});

@@ -212,11 +212,20 @@ export class CGDGarageDoor {
     // Node's built-in fetch (undici) keeps connections alive by default,
     // so no custom keep-alive agent is required.
     const startedAt = Date.now();
-    const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let response: Response;
+    let data: unknown;
+    try {
+      const url = new URL(`http://${deviceHostname}/api`);
+      url.searchParams.set('key', deviceLocalKey);
+      url.searchParams.set(cmd, value);
 
-    const data = await response.json();
+      response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      data = await response.json();
+    } catch (error) {
+      // Errors can quote the request URL, and so the key — scrub it before
+      // anything is logged or kept (retry/onFail logs, health summary).
+      throw this.redact(error);
+    }
     if (cmd === 'status') {
       this.lastStatusLatencyMs = Date.now() - startedAt;
     }
@@ -230,6 +239,20 @@ export class CGDGarageDoor {
     }
 
     return data;
+  };
+
+  private redact = (error: unknown): Error => {
+    const { deviceLocalKey } = this.config;
+    const scrub = (text: string) => [deviceLocalKey, encodeURIComponent(deviceLocalKey)]
+      .filter(Boolean)
+      .reduce((result, secret) => result.split(secret).join('***'), text);
+
+    const scrubbed = new Error(scrub(error instanceof Error ? error.message : String(error)));
+    if (error instanceof Error && error.cause) {
+      scrubbed.cause = scrub(String(error.cause));
+    }
+
+    return scrubbed;
   };
 
   private run = async ({
@@ -299,7 +322,7 @@ export class CGDGarageDoor {
         const send = async () => {
           if (cmd === 'door' && confirm && attempts++ > 0) {
             try {
-              const current = await this.fetchDevice('status', 'json') as Status;
+              const current = await this.fetchDevice('status', 'json', 2000) as Status;
               if (confirm.check(current)) {
                 this.log.info(`Door already reports "${current.door}" — not re-sending ${cmd}=${value}`);
                 return current;
@@ -332,7 +355,9 @@ export class CGDGarageDoor {
           },
           onFail: (error) => {
             failed = true;
-            this.lastPollError = error instanceof Error ? error.message : String(error);
+            if (cmd === 'status') {
+              this.lastPollError = error instanceof Error ? error.message : String(error);
+            }
             this.log.error(`Failed to run command: ${cmd}=${value}`);
             if (error instanceof Error) {
               this.log.error(`Error: ${error.message}`);
@@ -439,6 +464,7 @@ export class CGDGarageDoor {
   private getStatus = async (): Promise<Status | undefined | typeof POLL_SKIPPED> => {
     this.log.debug('Getting status...');
 
+    this.lastPollError = undefined;
     const data = await this.run({ cmd: 'status', value: 'json' });
 
     if (data === POLL_SKIPPED) {
@@ -447,6 +473,7 @@ export class CGDGarageDoor {
 
     if (!data) {
       this.log.error('Can not get status!');
+      this.lastPollError ??= 'Empty status response';
 
       return;
     }
@@ -661,6 +688,11 @@ export class CGDGarageDoor {
 
   public onStatusUpdate = (listener: StatusUpdateListener) => {
     this.statusUpdateListener = listener;
+
+    // The first poll may have finished before this was registered.
+    if (this.status) {
+      listener();
+    }
   };
 
   // Lets other consumers of the same device (the camera snapshot delegate)
@@ -736,7 +768,7 @@ export class CGDGarageDoor {
         await this.run({
           cmd: 'door', value: 'open',
           softValue: 'Opening',
-          confirm: this.doorConfirm((status) => [DoorState.Opened, DoorState.Opening, DoorState.Stopped].includes(parseDoorState(status.door))),
+          confirm: this.doorConfirm((status) => [DoorState.Opened, DoorState.Opening].includes(parseDoorState(status.door))),
         });
         this.log.debug('Opened door!');
       }
@@ -746,7 +778,7 @@ export class CGDGarageDoor {
         await this.run({
           cmd: 'door', value: 'close',
           softValue: 'Closing',
-          confirm: this.doorConfirm((status) => [DoorState.Closed, DoorState.Closing, DoorState.Stopped].includes(parseDoorState(status.door))),
+          confirm: this.doorConfirm((status) => [DoorState.Closed, DoorState.Closing].includes(parseDoorState(status.door))),
         });
         this.log.debug('Closed door!');
       }

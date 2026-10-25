@@ -244,3 +244,38 @@ test('a poll queued before a command yields to it', async () => {
     device.restore();
   }
 });
+
+test('opening a Stopped door re-sends after a failed send and waits for Opening', async () => {
+  const device = installFakeDevice({ door: 'Stopped' });
+  try {
+    const { door, internals } = make();
+    await internals.refreshStatus();
+    device.requests.length = 0;
+
+    let failures = 1;
+    device.failWhen = (request) => request === 'door=open' && failures-- > 0;
+
+    await door.setTargetDoorState(0);
+    await settle();
+
+    assert.equal(device.requests.filter((r) => r === 'door=open').length, 2);
+    assert.equal(internals.status?.door, 'Opening');
+  } finally {
+    device.restore();
+  }
+});
+
+test('a listener registered after the first poll is called once straight away', async () => {
+  const device = installFakeDevice();
+  try {
+    const { door, internals } = make();
+    await internals.refreshStatus();
+
+    let calls = 0;
+    door.onStatusUpdate(() => calls++);
+
+    assert.equal(calls, 1);
+  } finally {
+    device.restore();
+  }
+});

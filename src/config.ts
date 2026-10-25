@@ -7,7 +7,7 @@ export function readNumber(
   config: Record<string, unknown>,
   key: string,
   fallback: number,
-  { min, integer = false }: { min: number; integer?: boolean },
+  { min, max, integer = false }: { min: number; max: number; integer?: boolean },
 ): number {
   const value = config[key];
 
@@ -15,8 +15,8 @@ export function readNumber(
     return fallback;
   }
 
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || (integer && !Number.isInteger(value))) {
-    log.warn(`Ignoring invalid "${key}" (${JSON.stringify(value)}): expected ${integer ? 'a whole number' : 'a number'} of at least ${min}. Using ${fallback}.`);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    log.warn(`Ignoring invalid "${key}" (${JSON.stringify(value)}): expected ${integer ? 'a whole number' : 'a number'} between ${min} and ${max}. Using ${fallback}.`);
     return fallback;
   }
 
