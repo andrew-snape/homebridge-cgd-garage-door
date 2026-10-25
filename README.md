@@ -43,6 +43,37 @@ Add the following to your Homebridge config.json:
 
 You can find the deviceHostname and deviceLocalKey in the Local API section of the [MY CGD SMARTPHONE APP](https://www.cgdoors.com.au/garage-door-smartphone-app/).
 
+### Options
+
+Only the first two are required.
+
+| Option | Default | Description |
+|---|---|---|
+| `deviceHostname` | | Hostname or IP address of the door controller (required) |
+| `deviceLocalKey` | | Local API key from the CGD app (required) |
+| `enableCamera` | `true` | Expose the door camera in HomeKit |
+| `videoProcessor` | | Path to an `ffmpeg` binary |
+| `enableVacationSwitch` / `vacationSwitchName` | `true` / `"Vacation Mode"` | Show or rename the Vacation Mode switch |
+| `enableStopSwitch` / `stopSwitchName` | `true` / `"Stop"` | Show or rename the Stop switch |
+| `transitionTimeoutSeconds` | `60` | How long the door may report Opening/Closing before the plugin treats it as stuck and shows Stopped (`0` disables). Set it comfortably above your door's travel time. |
+| `pollIntervalSeconds` | `10` | Status check interval while the door is idle (minimum 1) |
+| `pollIntervalMovingSeconds` | `1.5` | Status check interval while the door is opening or closing (minimum 0.5) |
+| `unreachableAfterFailures` | `3` | Failed status checks in a row before HomeKit shows "No Response" (minimum 1) |
+| `healthSummaryMinutes` | `10` | How often to log the health summary (`0` disables) |
+
+Invalid or out-of-range numeric values are ignored with a single warning in the log, and the default is used instead.
+
+## Logging & diagnostics
+
+The plugin logs a few things that help when working out why a door did something, or why it stopped responding:
+
+- **Door events.** Whenever the door's reported state changes you get one line with the device's own wording and timestamp, e.g. `Door: Closed by transmitter No.3 (2026-10-24 22:07:33)`. This tells you whether a remote, the wall button or WiFi (HomeKit or the app) moved the door. It is logged on change only, not on every poll.
+- **Health summary.** Every `healthSummaryMinutes` (default 10) one line summarises that period: polls ok/failed and success rate, average and maximum response time, minimum and latest Wi-Fi signal (dBm), the door's cycle count and the last error. Nothing is logged for a period with no polls.
+- **Unknown door text.** If the door reports a state the plugin doesn't recognise, a warning shows the raw text, once per distinct text. Please open an issue with it so it can be supported.
+- **Error codes.** Each distinct non-zero device error code is logged once as a warning, with the door text and timestamp at that moment. While a code is active HomeKit shows the door as "No Response". What each code means isn't known yet, so these logs are the data for mapping them.
+- **Intruder alert text.** Door text containing "Intruder" is logged as a warning each time it appears. It has been seen on an ordinary WiFi-initiated open, so it is not treated as an alarm.
+- **No Response.** After `unreachableAfterFailures` failed status checks in a row (default 3) the door shows as "No Response" in HomeKit rather than a stale state, and returns to normal on the next successful check. Failed checks back off (up to 60 s) so an unresponsive door isn't hammered. Weak Wi-Fi (below -75 dBm) is also warned about, once, until it recovers above -70 dBm.
+
 ## Vacation Mode & Stop Switches
 
 Alongside the garage door and light, two `Switch` tiles are exposed:

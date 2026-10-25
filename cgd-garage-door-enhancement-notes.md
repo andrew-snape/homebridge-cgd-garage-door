@@ -34,6 +34,49 @@ Status JSON already returns fields the plugin ignores: `wdBm` (Wi-Fi signal), `c
 5. **Health summary.** One log line every few minutes: success rate, average latency, last error. Makes it easy to judge whether any change helped.
 6. **Unreachable-device behaviour.** After N failed polls, report `SERVICE_COMMUNICATION_FAILURE` (No Response) in HomeKit rather than a stale state. Currently the last known state is kept indefinitely.
 
+## Implementation status
+
+| Item | Status | Commit |
+|---|---|---|
+| Adaptive polling (1.5 s moving / 10 s idle / backoff to 60 s) | Done, now configurable | 7b8b520, 08aaa32 |
+| Weak-signal warnings, signal logged on failed polls | Done | 7b8b520 |
+| Unreachable device reports No Response | Done, threshold configurable | 7b8b520, 08aaa32 |
+| Superseded commands settle; updating counter; single-attempt polls; no re-sending a slow door; no invalid HAP values | Done | 4464b1f |
+| Polls don't revert optimistic state; bounded confirmation; status applied on confirm; door re-send checks status first; polls yield to commands; no startup wait | Done | 3e8230b |
+| Snapshot cache and shared captures; shorter snapshot timeout | Done | 561b80b |
+| Door event log, unknown-text and error-code warnings, intruder warning, health summary | Done | bf7a403 |
+| Config options, unit tests in CI | Done | 08aaa32 |
+| `Connection: close` theory | Ruled out: the device already sends `Connection: close` | |
+| `error` field: log distinct codes | Done (logging only) | bf7a403 |
+
+Still open:
+
+- Open-too-long sensor (a contact/occupancy sensor that trips if the door stays open).
+- Cycles maintenance reminder (`cycles` is only logged in the health line today).
+- Motion detection from the camera stream.
+- Multi-door support.
+- The raw door text after `door=stop` is unknown (the plugin matches on `Stop`); it needs capturing from a real stop.
+- Map error codes to HomeKit `ObstructionDetected` once the logs show what they mean.
+
+## Observed live data
+
+Door texts seen from `status=json` (the plugin matches on the prefix):
+
+- `Closed by transmitter No.3`
+- `Opening by WiFi`
+- `Opened. Intruder Alert` (seen after an ordinary WiFi-initiated open, so it may not indicate a real intrusion)
+- `Closing by WiFi`
+- `Closed by WiFi`
+
+Timings: opening takes about 19 s and closing about 13 s. A status call normally takes 40 to 110 ms.
+
+Port 88 (camera) contention, measured with `curl` holding the MJPEG stream while timing `status=json` on port 80:
+
+- Baseline: 0.05 to 0.11 s per call.
+- While a stream was open: 0.045 to 0.083 s, so no slowdown during streaming.
+- When a stream connection closed, one status call stalled for 9.1 s in one run and 9.9 s in another; a third run saw only a 0.6 to 0.8 s blip. Short 1 s connections caused no slowdown.
+- Because of the occasional stall at disconnect, snapshots still take the device lock and use a 6 s timeout.
+
 ## Door and network side (no firmware changes)
 
 I can't recommend flashing anything. The firmware is closed and vendor-signed. These steps are safe:
