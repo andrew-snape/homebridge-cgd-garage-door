@@ -1,7 +1,8 @@
 interface Config {
-  until?: () => Promise<unknown>;
   retries: number;
   isRetry?: boolean;
+  // Gap between attempts; defaults to RETRY_DELAY_MS.
+  delayMs?: number;
   onRetry: (error: unknown, retries: number) => void;
   onRecover: (retries: number) => void;
   onFail: (error: unknown) => void;
@@ -9,19 +10,19 @@ interface Config {
 
 // Gives a struggling/overloaded device a moment to recover instead of
 // hammering it with back-to-back retries.
-const RETRY_DELAY_MS = 1500;
+export const RETRY_DELAY_MS = 1500;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const retry = async (fn: () => Promise<unknown>, config: Config) => {
-  const { until, retries, onRetry, onRecover, onFail, isRetry } = config;
+// Retries `fn` (a single send / fetch) on failure only. Whether the device
+// then reaches some expected state is deliberately *not* this function's
+// concern: re-sending a command because the door is merely slow to react
+// would repeat it (e.g. door=open up to 4 times).
+const retry = async (fn: () => Promise<unknown>, config: Config): Promise<unknown> => {
+  const { retries, onRetry, onRecover, onFail, isRetry, delayMs = RETRY_DELAY_MS } = config;
 
   try {
     const data = await fn();
-
-    if (until && !await until()) {
-      throw new Error('Failed to reach the expected state');
-    }
 
     if (isRetry) {
       onRecover(retries);
@@ -34,7 +35,7 @@ const retry = async (fn: () => Promise<unknown>, config: Config) => {
     }
 
     onRetry(error, retries);
-    await sleep(RETRY_DELAY_MS);
+    await sleep(delayMs);
 
     return retry(fn, {
       ...config,

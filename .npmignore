@@ -21,3 +21,7 @@ node_modules/
 
 # Release configuration
 .releaserc
+
+# unit test build output
+.test-build/
+tsconfig.test.json

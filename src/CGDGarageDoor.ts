@@ -1,7 +1,7 @@
 import type { CharacteristicValue, Logging } from 'homebridge';
 import Mutex from './mutex.js';
 import parseDoorState, { DoorState } from './parseDoorState.js';
-import retry from './retry.js';
+import retry, { RETRY_DELAY_MS } from './retry.js';
 
 interface Status {
   lamp: 'on' | 'off';
@@ -23,13 +23,39 @@ interface Config {
 
 type StatusUpdateListener = () => void;
 
+// Injectable so tests don't have to wait out real device timings.
+export interface Timings {
+  // Gap between attempts when re-sending a command that failed on the network/HTTP level.
+  retryDelayMs: number;
+  // Gap between status checks while waiting to see a sent command take effect.
+  confirmIntervalMs: number;
+  // How long to wait for the expected state before giving up (the door takes
+  // ~19s to open and ~13s to close, but the accepted states include the
+  // transitional Opening/Closing, so it normally shows within a few seconds).
+  confirmDoorTimeoutMs: number;
+  confirmSwitchTimeoutMs: number;
+}
+
+export interface Options {
+  timings?: Partial<Timings>;
+  // Tests turn the background poll loop off.
+  autoPoll?: boolean;
+}
+
+const DEFAULT_TIMINGS: Timings = {
+  retryDelayMs: RETRY_DELAY_MS,
+  confirmIntervalMs: 1500,
+  confirmDoorTimeoutMs: 10000,
+  confirmSwitchTimeoutMs: 5000,
+};
+
 // Poll quickly while the door is moving so HomeKit tracks it, slowly when idle
 // to go easy on a device that only handles one connection at a time, and back
 // off exponentially while it isn't answering.
 const POLL_TRANSITION_MS = 1500;
 const POLL_IDLE_MS = 10000;
 const POLL_BACKOFF_MAX_MS = 60000;
-// Consecutive failed polls (each already retried) before HomeKit shows "No Response".
+// Consecutive failed polls (the next poll is the retry) before HomeKit shows "No Response".
 const UNREACHABLE_AFTER_FAILURES = 3;
 const WEAK_SIGNAL_DBM = -75;
 // Hysteresis so a signal hovering around the threshold doesn't log on every poll.
@@ -48,8 +74,10 @@ export class CGDGarageDoor {
   private config: Config;
   private status?: Status;
   private statusUpdateListener?: StatusUpdateListener;
-  private isUpdating = false;
-  private runQ: { name: string; fn: () => Promise<unknown>}[] = [];
+  // A count rather than a flag: overlapping commands each hold it, so the first
+  // to finish can't clear it while others are still pending.
+  private updatingCount = 0;
+  private runQ: { name: string; fn: () => Promise<unknown>; supersede: () => void }[] = [];
   private transitionStartedAt?: number;
   // The raw door value last reported by the device, tracked separately from
   // `status.door` (which the transition watchdog below may override to
@@ -65,24 +93,43 @@ export class CGDGarageDoor {
   private consecutiveFailures = 0;
   private unreachable = false;
   private weakSignalWarned = false;
+  private readonly timings: Timings;
 
-  constructor(log: Logging, config: Config) {
+  constructor(log: Logging, config: Config, options: Options = {}) {
     this.log = log;
     this.config = config;
+    this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
 
-    this.poolStatus();
+    if (options.autoPoll ?? true) {
+      this.poolStatus();
+    }
+  }
+
+  private get isUpdating() {
+    return this.updatingCount > 0;
   }
 
   private withRunQ = async (key: string, fn: () => Promise<unknown>) => new Promise((resolve, reject) => {
     this.log.debug('Adding to queue');
 
-    if (this.runQ.length > 1) {
-      const [item, ...rest] = this.runQ;
-      this.runQ = [item, ...rest.filter((item) => item.name !== key)];
+    // The first item may already be running, so leave it alone; any later item
+    // for the same key is stale. Settle it (without running it, so its revert
+    // never fires) so its caller doesn't wait forever.
+    const [running, ...waiting] = this.runQ;
+    if (running) {
+      this.runQ = [running, ...waiting.filter((item) => {
+        if (item.name !== key) {
+          return true;
+        }
+        this.log.debug(`Superseding queued ${key} command`);
+        item.supersede();
+        return false;
+      })];
     }
 
     this.runQ.push({
       name: key,
+      supersede: () => resolve(undefined),
       fn: async () => {
         try {
           const result = await fn();
@@ -120,7 +167,7 @@ export class CGDGarageDoor {
   // A single, bare HTTP round-trip to the device — no mutex, no retry. Callers
   // that need serialization against other device traffic (camera snapshots,
   // other commands) must wrap this in deviceMutex.runExclusive themselves;
-  // see the note on `until` below for why the mutex can't just be baked in here.
+  // see the note on `confirmState` below for why the mutex can't just be baked in here.
   private fetchDevice = async (cmd: string, value: string): Promise<unknown> => {
     this.log.debug(`Running command: ${cmd}=${value}`);
 
@@ -147,14 +194,15 @@ export class CGDGarageDoor {
   private run = async ({
     cmd, value,
     softValue = value,
-    until,
+    confirm,
   }: ApiCall & {
     softValue?: string;
-    until?: () => Promise<boolean>;
+    // The expected state to wait for once the command has been sent.
+    confirm?: { check: (status: Status) => boolean; timeoutMs: number };
   }): Promise<unknown> => {
-    const fn = () => {
+    const fn = async () => {
       this.log.debug(`Setting ${cmd} to ${softValue}`);
-      let oldStatus: Status;
+      let oldStatus: Status | undefined;
 
       if (this.status?.[cmd]) {
         oldStatus = { ...this.status };
@@ -180,41 +228,63 @@ export class CGDGarageDoor {
         }
       }
 
-      return this.deviceMutex.runExclusive(() => retry(() => this.fetchDevice(cmd, value), {
-        until,
-        retries: 3,
-        onRetry: (error, retries) => {
-          this.log.warn(`Failed to run command [${retries} retries]: ${cmd}=${value}`);
-          if (error instanceof Error) {
-            this.log.warn(`Error: ${error.message}`);
-            if (error.cause) {
-              this.log.warn(`Cause: ${String(error.cause)}`);
-            }
-          }
-        },
-        onRecover: (retries) => {
-          this.log.info(`Recovered to run command [${retries} retries]: ${cmd}=${value}`);
-        },
-        onFail: (error) => {
-          this.log.error(`Failed to run command: ${cmd}=${value}`);
-          if (error instanceof Error) {
-            this.log.error(`Error: ${error.message}`);
-            if (error.cause) {
-              this.log.error(`Cause: ${String(error.cause)}`);
-            }
-          }
+      const revert = () => {
+        if (oldStatus) {
+          this.log.debug(`Reverting ${cmd}`);
+          this.status = oldStatus;
+          this.transitionStartedAt = undefined;
+          this.statusUpdateListener?.();
+        }
+      };
 
-          if (oldStatus) {
-            this.log.debug(`Reverting ${cmd}`);
-            this.status = oldStatus;
-            this.transitionStartedAt = undefined;
-            this.statusUpdateListener?.();
-          }
-        },
-      }));
+      return this.deviceMutex.runExclusive(async () => {
+        let failed = false;
+
+        // Only the send is retried, and only when it fails outright. A status
+        // poll gets a single attempt: the next poll is its retry, and holding
+        // the mutex through several slow attempts would block door commands.
+        const data = await retry(() => this.fetchDevice(cmd, value), {
+          retries: cmd === 'status' ? 0 : 3,
+          delayMs: this.timings.retryDelayMs,
+          onRetry: (error, retries) => {
+            this.log.warn(`Failed to run command [${retries} retries]: ${cmd}=${value}`);
+            if (error instanceof Error) {
+              this.log.warn(`Error: ${error.message}`);
+              if (error.cause) {
+                this.log.warn(`Cause: ${String(error.cause)}`);
+              }
+            }
+          },
+          onRecover: (retries) => {
+            this.log.info(`Recovered to run command [${retries} retries]: ${cmd}=${value}`);
+          },
+          onFail: (error) => {
+            failed = true;
+            this.log.error(`Failed to run command: ${cmd}=${value}`);
+            if (error instanceof Error) {
+              this.log.error(`Error: ${error.message}`);
+              if (error.cause) {
+                this.log.error(`Cause: ${String(error.cause)}`);
+              }
+            }
+
+            revert();
+          },
+        });
+
+        if (!failed && confirm && !await this.confirmState(confirm.check, confirm.timeoutMs)) {
+          // Don't re-send: the command was accepted, the device is just slow
+          // (or ignored it). Show the real state again; the regular poll
+          // will correct it if it was merely late.
+          this.log.warn(`Did not see the expected state after ${cmd}=${value} within ${confirm.timeoutMs / 1000}s`);
+          revert();
+        }
+
+        return data;
+      });
     };
 
-    if (until) {
+    if (confirm) {
       return this.withRunQ(cmd, fn);
     }
 
@@ -222,40 +292,53 @@ export class CGDGarageDoor {
   };
 
   private withIsUpdating = async <T>(fn: () => Promise<T>): Promise<void> => {
-    this.isUpdating = true;
+    this.updatingCount++;
     this.log.debug('Updating is in progress...');
 
     try {
       await fn();
     } finally {
-      this.isUpdating = false;
+      this.updatingCount--;
       this.log.debug('Updating is finished');
     }
   };
 
-  // `until` runs *inside* the retry() call that deviceMutex.runExclusive is
-  // already executing for the in-flight door/lamp/vacation command (see
-  // `run` below). deviceMutex isn't reentrant — it's just a promise chain —
-  // so calling back into deviceMutex.runExclusive from here (as going through
-  // the normal getStatus()/run() path would) would queue behind that very
-  // command's own still-pending promise and deadlock the whole device
-  // forever, hanging isUpdating as true until Homebridge is restarted. Since
-  // we're already serialized against other device traffic by virtue of
-  // running inside that command's exclusive section, check status directly.
-  private until = (fn: (status: Status) => boolean) => async (): Promise<boolean> => {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+  // Polls status for the expected state after a command has been sent. This
+  // runs *inside* the deviceMutex.runExclusive section already executing for
+  // the in-flight door/lamp/vacation command (see `run` above). deviceMutex
+  // isn't reentrant — it's just a promise chain — so calling back into
+  // deviceMutex.runExclusive from here (as going through the normal
+  // getStatus()/run() path would) would queue behind that very command's own
+  // still-pending promise and deadlock the whole device forever, hanging
+  // isUpdating as true until Homebridge is restarted. Since we're already
+  // serialized against other device traffic by virtue of running inside that
+  // command's exclusive section, check status directly.
+  private confirmState = async (check: (status: Status) => boolean, timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
 
-    let status: Status | undefined;
-    try {
-      status = await this.fetchDevice('status', 'json') as Status;
-    } catch (error) {
-      this.log.warn(`Failed to check status while waiting: ${error}`);
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, this.timings.confirmIntervalMs));
+
+      let status: Status | undefined;
+      try {
+        status = await this.fetchDevice('status', 'json') as Status;
+      } catch (error) {
+        this.log.warn(`Failed to check status while waiting: ${error}`);
+      }
+
+      this.log.debug(`Checking status... ${JSON.stringify(status)}`);
+
+      if (status && check(status)) {
+        return true;
+      }
     }
 
-    this.log.debug(`Checking status... ${JSON.stringify(status)}`);
-
-    return !!status && fn(status);
+    return false;
   };
+
+  private doorConfirm = (check: (status: Status) => boolean) => ({ check, timeoutMs: this.timings.confirmDoorTimeoutMs });
+
+  private switchConfirm = (check: (status: Status) => boolean) => ({ check, timeoutMs: this.timings.confirmSwitchTimeoutMs });
 
   private getStatus = async (): Promise<Status | undefined> => {
     this.log.debug('Getting status...');
@@ -456,7 +539,9 @@ export class CGDGarageDoor {
     }, 1000);
   });
 
-  public getCurrentDoorState = (): number => {
+  // Getters return undefined when the state is unknown; HAP rejects any value
+  // outside a characteristic's range, so callers must not pass that through.
+  public getCurrentDoorState = (): number | undefined => {
     const doorState = parseDoorState(this.status?.door);
 
     // export declare class CurrentDoorState extends Characteristic {
@@ -471,7 +556,7 @@ export class CGDGarageDoor {
 
     if (doorState === DoorState.Error) {
       this.log.error(`[getDoorCurrentState] Unknown door state: ${doorState}`);
-      return -1;
+      return undefined;
     }
 
     return {
@@ -483,7 +568,7 @@ export class CGDGarageDoor {
     }[doorState];
   };
 
-  public getTargetDoorState = (): number => {
+  public getTargetDoorState = (): number | undefined => {
     const doorState = parseDoorState(this.status?.door);
 
     // export declare class TargetDoorState extends Characteristic {
@@ -495,7 +580,7 @@ export class CGDGarageDoor {
 
     if (doorState === DoorState.Error) {
       this.log.error(`[getDoorTargetState] Unknown door state: ${doorState}`);
-      return -1;
+      return undefined;
     }
 
     return {
@@ -514,7 +599,7 @@ export class CGDGarageDoor {
         await this.run({
           cmd: 'door', value: 'open',
           softValue: 'Opening',
-          until: this.until((status) => [DoorState.Opened, DoorState.Opening, DoorState.Stopped].includes(parseDoorState(status.door))),
+          confirm: this.doorConfirm((status) => [DoorState.Opened, DoorState.Opening, DoorState.Stopped].includes(parseDoorState(status.door))),
         });
         this.log.debug('Opened door!');
       }
@@ -524,7 +609,7 @@ export class CGDGarageDoor {
         await this.run({
           cmd: 'door', value: 'close',
           softValue: 'Closing',
-          until: this.until((status) => [DoorState.Closed, DoorState.Closing, DoorState.Stopped].includes(parseDoorState(status.door))),
+          confirm: this.doorConfirm((status) => [DoorState.Closed, DoorState.Closing, DoorState.Stopped].includes(parseDoorState(status.door))),
         });
         this.log.debug('Closed door!');
       }
@@ -537,18 +622,18 @@ export class CGDGarageDoor {
       await this.run({
         cmd: 'door', value: 'stop',
         softValue: 'Stopped',
-        until: this.until((status) => parseDoorState(status.door) === DoorState.Stopped),
+        confirm: this.doorConfirm((status) => parseDoorState(status.door) === DoorState.Stopped),
       });
       this.log.debug('Stopped door!');
     }).catch((error) => this.log.error(`Unexpected error stopping door: ${error}`));
   };
 
-  public getLightbulb = (): number => {
+  public getLightbulb = (): number | undefined => {
     const lampState = this.status?.lamp;
 
     if (!lampState) {
       this.log.error(`[getLightbulb] Unknown lamp state: ${lampState}`);
-      return -1;
+      return undefined;
     }
 
     return {
@@ -563,7 +648,7 @@ export class CGDGarageDoor {
         this.log.debug('Turning on lightbulb...');
         await this.run({
           cmd: 'lamp', value: 'on',
-          until: this.until((status) => status.lamp === 'on'),
+          confirm: this.switchConfirm((status) => status.lamp === 'on'),
         });
         this.log.debug('Turned on lightbulb!');
       }
@@ -572,19 +657,19 @@ export class CGDGarageDoor {
         this.log.debug('Turning off lightbulb...');
         await this.run({
           cmd: 'lamp', value: 'off',
-          until: this.until((status) => status.lamp === 'off'),
+          confirm: this.switchConfirm((status) => status.lamp === 'off'),
         });
         this.log.debug('Turned off lightbulb!');
       }
     }).catch((error) => this.log.error(`Unexpected error setting lightbulb: ${error}`));
   };
 
-  public getVacation = (): number => {
+  public getVacation = (): number | undefined => {
     const vacationState = this.status?.vacation;
 
     if (!vacationState) {
       this.log.error(`[getVacation] Unknown vacation state: ${vacationState}`);
-      return -1;
+      return undefined;
     }
 
     return {
@@ -599,7 +684,7 @@ export class CGDGarageDoor {
         this.log.debug('Turning on vacation...');
         await this.run({
           cmd: 'vacation', value: 'on',
-          until: this.until((status) => status.vacation === 'on'),
+          confirm: this.switchConfirm((status) => status.vacation === 'on'),
         });
         this.log.debug('Turned on vacation!');
       }
@@ -608,7 +693,7 @@ export class CGDGarageDoor {
         this.log.debug('Turning off vacation...');
         await this.run({
           cmd: 'vacation', value: 'off',
-          until: this.until((status) => status.vacation === 'off'),
+          confirm: this.switchConfirm((status) => status.vacation === 'off'),
         });
         this.log.debug('Turned off vacation!');
       }

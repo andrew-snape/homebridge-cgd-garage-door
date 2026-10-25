@@ -27,6 +27,7 @@
   "main": "dist/index.js",
   "scripts": {
     "lint": "eslint . --max-warnings=0",
+    "test": "rimraf ./.test-build && tsc -p tsconfig.test.json && node --test .test-build/test/unit/",
     "watch": "npm run build && npm link && nodemon",
     "build": "rimraf ./dist && tsc",
     "prepublishOnly": "npm run lint && npm run build"

@@ -84,6 +84,15 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     this.log('Accessory with name %s added', name);
   }
 
+  // HAP rejects values outside a characteristic's range, so an unknown state
+  // is reported as a communication failure instead of a placeholder value.
+  private knownOrThrow(value: number | undefined): number {
+    if (value === undefined) {
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+    return value;
+  }
+
   configureGarageDoorAccessory(
     accessory: PlatformAccessory,
     cgdGarageDoor: CGDGarageDoor,
@@ -110,17 +119,17 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
         if (cgdGarageDoor.hasDeviceError() || cgdGarageDoor.isDeviceUnreachable()) {
           throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
         }
-        return cgdGarageDoor.getCurrentDoorState();
+        return this.knownOrThrow(cgdGarageDoor.getCurrentDoorState());
       });
 
     garageDoorOpener.getCharacteristic(this.api.hap.Characteristic.TargetDoorState)
-      .onGet(() => cgdGarageDoor.getTargetDoorState())
+      .onGet(() => this.knownOrThrow(cgdGarageDoor.getTargetDoorState()))
       .onSet((value) => cgdGarageDoor.setTargetDoorState(+value));
 
     const lightbulb = accessory.getService(this.api.hap.Service.Lightbulb) || accessory.addService(new this.api.hap.Service.Lightbulb(accessory.displayName));
 
     lightbulb.getCharacteristic(this.api.hap.Characteristic.On)
-      .onGet(() => cgdGarageDoor.getLightbulb())
+      .onGet(() => this.knownOrThrow(cgdGarageDoor.getLightbulb()))
       .onSet((value) => cgdGarageDoor.setLightbulb(value));
 
     // Prior versions added a single, subtype-less Switch service for vacation mode.
@@ -143,7 +152,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     if (vacationSwitch) {
       vacationSwitch.setCharacteristic(this.api.hap.Characteristic.Name, options.vacationSwitchName);
       vacationSwitch.getCharacteristic(this.api.hap.Characteristic.On)
-        .onGet(() => cgdGarageDoor.getVacation())
+        .onGet(() => this.knownOrThrow(cgdGarageDoor.getVacation()))
         .onSet((value) => cgdGarageDoor.setVacation(value));
     } else if (existingVacationSwitch) {
       accessory.removeService(existingVacationSwitch);
@@ -181,23 +190,35 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     }
 
     cgdGarageDoor.onStatusUpdate(() => {
+      const currentDoorState = cgdGarageDoor.getCurrentDoorState();
       garageDoorOpener
         .getCharacteristic(this.api.hap.Characteristic.CurrentDoorState).updateValue(
           cgdGarageDoor.isDeviceUnreachable()
             ? new Error('CGD device is not responding')
             : cgdGarageDoor.hasDeviceError()
               ? new Error(`CGD device reported error code ${cgdGarageDoor.getDeviceErrorCode()}`)
-              : cgdGarageDoor.getCurrentDoorState(),
+              : currentDoorState ?? new Error('CGD door state is unknown'),
         );
 
-      garageDoorOpener
-        .getCharacteristic(this.api.hap.Characteristic.TargetDoorState).updateValue(cgdGarageDoor.getTargetDoorState());
+      // Unknown values are skipped rather than pushed: HAP rejects them, and
+      // the last good value is the best thing to keep showing.
+      const targetDoorState = cgdGarageDoor.getTargetDoorState();
+      if (targetDoorState !== undefined) {
+        garageDoorOpener
+          .getCharacteristic(this.api.hap.Characteristic.TargetDoorState).updateValue(targetDoorState);
+      }
 
-      lightbulb
-        .getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getLightbulb());
+      const lightbulbState = cgdGarageDoor.getLightbulb();
+      if (lightbulbState !== undefined) {
+        lightbulb
+          .getCharacteristic(this.api.hap.Characteristic.On).updateValue(lightbulbState);
+      }
 
-      vacationSwitch
-        ?.getCharacteristic(this.api.hap.Characteristic.On).updateValue(cgdGarageDoor.getVacation());
+      const vacationState = cgdGarageDoor.getVacation();
+      if (vacationState !== undefined) {
+        vacationSwitch
+          ?.getCharacteristic(this.api.hap.Characteristic.On).updateValue(vacationState);
+      }
     });
 
     if (options.enableCamera) {
