@@ -107,7 +107,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
 
     garageDoorOpener.getCharacteristic(this.api.hap.Characteristic.CurrentDoorState)
       .onGet(() => {
-        if (cgdGarageDoor.hasDeviceError()) {
+        if (cgdGarageDoor.hasDeviceError() || cgdGarageDoor.isDeviceUnreachable()) {
           throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
         }
         return cgdGarageDoor.getCurrentDoorState();
@@ -183,9 +183,11 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     cgdGarageDoor.onStatusUpdate(() => {
       garageDoorOpener
         .getCharacteristic(this.api.hap.Characteristic.CurrentDoorState).updateValue(
-          cgdGarageDoor.hasDeviceError()
-            ? new Error(`CGD device reported error code ${cgdGarageDoor.getDeviceErrorCode()}`)
-            : cgdGarageDoor.getCurrentDoorState(),
+          cgdGarageDoor.isDeviceUnreachable()
+            ? new Error('CGD device is not responding')
+            : cgdGarageDoor.hasDeviceError()
+              ? new Error(`CGD device reported error code ${cgdGarageDoor.getDeviceErrorCode()}`)
+              : cgdGarageDoor.getCurrentDoorState(),
         );
 
       garageDoorOpener

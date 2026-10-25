@@ -23,6 +23,18 @@ interface Config {
 
 type StatusUpdateListener = () => void;
 
+// Poll quickly while the door is moving so HomeKit tracks it, slowly when idle
+// to go easy on a device that only handles one connection at a time, and back
+// off exponentially while it isn't answering.
+const POLL_TRANSITION_MS = 1500;
+const POLL_IDLE_MS = 10000;
+const POLL_BACKOFF_MAX_MS = 60000;
+// Consecutive failed polls (each already retried) before HomeKit shows "No Response".
+const UNREACHABLE_AFTER_FAILURES = 3;
+const WEAK_SIGNAL_DBM = -75;
+// Hysteresis so a signal hovering around the threshold doesn't log on every poll.
+const SIGNAL_RECOVERED_DBM = -70;
+
 // The device's documented local API command set (see the CGD app's "Local API" screen):
 // status=json, door=[open|stop|close], lamp=[on|off], vacation=[on|off]
 type ApiCall =
@@ -50,6 +62,9 @@ export class CGDGarageDoor {
   // serializes our own HTTP calls against each other and, via
   // withDeviceLock, against the camera snapshot ffmpeg calls too.
   private deviceMutex = new Mutex();
+  private consecutiveFailures = 0;
+  private unreachable = false;
+  private weakSignalWarned = false;
 
   constructor(log: Logging, config: Config) {
     this.log = log;
@@ -272,7 +287,7 @@ export class CGDGarageDoor {
       // A failed poll (network hiccup, device busy, etc.) is not the same as
       // the door having no state — keep displaying the last known-good status
       // rather than wiping it out from under the accessory.
-      this.log.error('Skip updating status because the device did not respond');
+      this.recordPollFailure();
 
       return;
     }
@@ -281,6 +296,8 @@ export class CGDGarageDoor {
       this.log.info('Skip updating status because it is updating');
       return;
     }
+
+    this.recordPollSuccess(status);
 
     // Track continuity of the *real* device-reported door value, independent of
     // whatever we end up displaying (the watchdog below may override it to
@@ -355,9 +372,63 @@ export class CGDGarageDoor {
     return values.every((value) => this.status?.[value] === data?.[value]);
   };
 
+  private recordPollFailure = () => {
+    this.consecutiveFailures++;
+
+    const lastSignal = this.status?.wdBm;
+    this.log.error(
+      `Skip updating status because the device did not respond [${this.consecutiveFailures} in a row]`
+      + (lastSignal ? ` (last reported Wi-Fi signal ${lastSignal} dBm)` : ''),
+    );
+
+    if (!this.unreachable && this.consecutiveFailures >= UNREACHABLE_AFTER_FAILURES) {
+      this.unreachable = true;
+      this.log.warn(`Device unreachable after ${this.consecutiveFailures} failed polls — reporting No Response`);
+      this.statusUpdateListener?.();
+    }
+  };
+
+  private recordPollSuccess = (status: Status) => {
+    if (this.unreachable) {
+      this.log.info(`Device reachable again after ${this.consecutiveFailures} failed polls`);
+      this.unreachable = false;
+      // The regular update below only fires when displayed values changed, so
+      // clear the "No Response" state explicitly.
+      this.statusUpdateListener?.();
+    }
+    this.consecutiveFailures = 0;
+
+    this.checkSignal(Number(status.wdBm));
+  };
+
+  private checkSignal = (dBm: number) => {
+    if (Number.isNaN(dBm)) {
+      return;
+    }
+
+    if (dBm < WEAK_SIGNAL_DBM && !this.weakSignalWarned) {
+      this.weakSignalWarned = true;
+      this.log.warn(`Weak Wi-Fi signal at the door controller: ${dBm} dBm (below ${WEAK_SIGNAL_DBM})`);
+    } else if (dBm > SIGNAL_RECOVERED_DBM && this.weakSignalWarned) {
+      this.weakSignalWarned = false;
+      this.log.info(`Wi-Fi signal at the door controller recovered: ${dBm} dBm`);
+    }
+  };
+
+  private nextPollDelay = (): number => {
+    if (this.consecutiveFailures > 0) {
+      return Math.min(POLL_IDLE_MS * 2 ** (this.consecutiveFailures - 1), POLL_BACKOFF_MAX_MS);
+    }
+
+    const doorState = parseDoorState(this.lastRawDoorValue);
+    const moving = doorState === DoorState.Opening || doorState === DoorState.Closing;
+
+    return moving || this.isUpdating ? POLL_TRANSITION_MS : POLL_IDLE_MS;
+  };
+
   private poolStatus = async () => {
     await this.refreshStatus();
-    setTimeout(this.poolStatus, 5000);
+    setTimeout(this.poolStatus, this.nextPollDelay());
   };
 
   public onStatusUpdate = (listener: StatusUpdateListener) => {
@@ -367,6 +438,8 @@ export class CGDGarageDoor {
   // Lets other consumers of the same device (the camera snapshot delegate)
   // serialize their requests against ours instead of racing them.
   public withDeviceLock = <T>(fn: () => Promise<T>): Promise<T> => this.deviceMutex.runExclusive(fn);
+
+  public isDeviceUnreachable = (): boolean => this.unreachable;
 
   public hasDeviceError = (): boolean => !!this.status?.error && this.status.error !== '0';
 
