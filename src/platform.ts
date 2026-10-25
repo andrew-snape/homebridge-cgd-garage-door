@@ -64,9 +64,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
-  async addAccessory(name: string, cgdGarageDoor: CGDGarageDoor, options: AccessoryOptions) {
-    await cgdGarageDoor.waitForStatus();
-
+  addAccessory(name: string, cgdGarageDoor: CGDGarageDoor, options: AccessoryOptions) {
     this.log('Adding new accessory with name %s', name);
 
     const uuid = this.api.hap.uuid.generate(name);

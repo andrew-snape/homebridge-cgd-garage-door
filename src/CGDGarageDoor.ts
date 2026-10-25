@@ -23,6 +23,9 @@ interface Config {
 
 type StatusUpdateListener = () => void;
 
+// Returned in place of a status when a queued poll stood aside for a command.
+const POLL_SKIPPED = Symbol('poll skipped');
+
 // Injectable so tests don't have to wait out real device timings.
 export interface Timings {
   // Gap between attempts when re-sending a command that failed on the network/HTTP level.
@@ -88,7 +91,9 @@ export class CGDGarageDoor {
   private lastRawDoorValue?: string;
   // The device only reliably handles one connection at a time — this
   // serializes our own HTTP calls against each other and, via
-  // withDeviceLock, against the camera snapshot ffmpeg calls too.
+  // withDeviceLock, against the camera snapshot ffmpeg calls too (measured: a
+  // camera connection on port 88 usually doesn't slow the API, but the device
+  // has been seen stalling ~10s when one disconnects).
   private deviceMutex = new Mutex();
   private consecutiveFailures = 0;
   private unreachable = false;
@@ -168,14 +173,14 @@ export class CGDGarageDoor {
   // that need serialization against other device traffic (camera snapshots,
   // other commands) must wrap this in deviceMutex.runExclusive themselves;
   // see the note on `confirmState` below for why the mutex can't just be baked in here.
-  private fetchDevice = async (cmd: string, value: string): Promise<unknown> => {
+  private fetchDevice = async (cmd: string, value: string, timeoutMs = 5000): Promise<unknown> => {
     this.log.debug(`Running command: ${cmd}=${value}`);
 
     const { deviceHostname, deviceLocalKey } = this.config;
     // Node's built-in fetch (undici) keeps connections alive by default,
     // so no custom keep-alive agent is required.
     const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const data = await response.json();
@@ -201,10 +206,15 @@ export class CGDGarageDoor {
     confirm?: { check: (status: Status) => boolean; timeoutMs: number };
   }): Promise<unknown> => {
     const fn = async () => {
-      this.log.debug(`Setting ${cmd} to ${softValue}`);
+      if (cmd !== 'status') {
+        this.log.debug(`Setting ${cmd} to ${softValue}`);
+      }
       let oldStatus: Status | undefined;
 
-      if (this.status?.[cmd]) {
+      // A status poll isn't a state change, so it gets no optimistic update (and
+      // so no revert, which could clobber a command's optimistic state or reset
+      // the transition watchdog when the poll merely failed).
+      if (cmd !== 'status' && this.status?.[cmd]) {
         oldStatus = { ...this.status };
         // softValue is an optimistic placeholder for whichever field `cmd` names,
         // not necessarily one of that field's real device values (e.g. 'Opening').
@@ -238,12 +248,38 @@ export class CGDGarageDoor {
       };
 
       return this.deviceMutex.runExclusive(async () => {
+        // A poll that queued up before a command arrived must not make it wait.
+        if (cmd === 'status' && this.isUpdating) {
+          this.log.debug('Skip polling status because a command is pending');
+          return POLL_SKIPPED;
+        }
+
         let failed = false;
+        let attempts = 0;
+
+        // A door command that timed out or aborted may still have reached the
+        // device. Before re-sending, look: if the door is already where the
+        // command would put it, count it as sent instead of repeating it.
+        const send = async () => {
+          if (cmd === 'door' && confirm && attempts++ > 0) {
+            try {
+              const current = await this.fetchDevice('status', 'json') as Status;
+              if (confirm.check(current)) {
+                this.log.info(`Door already reports "${current.door}" — not re-sending ${cmd}=${value}`);
+                return current;
+              }
+            } catch (error) {
+              this.log.debug(`Could not check status before re-sending: ${error}`);
+            }
+          }
+
+          return this.fetchDevice(cmd, value);
+        };
 
         // Only the send is retried, and only when it fails outright. A status
         // poll gets a single attempt: the next poll is its retry, and holding
         // the mutex through several slow attempts would block door commands.
-        const data = await retry(() => this.fetchDevice(cmd, value), {
+        const data = await retry(send, {
           retries: cmd === 'status' ? 0 : 3,
           delayMs: this.timings.retryDelayMs,
           onRetry: (error, retries) => {
@@ -272,12 +308,21 @@ export class CGDGarageDoor {
           },
         });
 
-        if (!failed && confirm && !await this.confirmState(confirm.check, confirm.timeoutMs)) {
-          // Don't re-send: the command was accepted, the device is just slow
-          // (or ignored it). Show the real state again; the regular poll
-          // will correct it if it was merely late.
-          this.log.warn(`Did not see the expected state after ${cmd}=${value} within ${confirm.timeoutMs / 1000}s`);
-          revert();
+        if (!failed && confirm) {
+          const { confirmed, status } = await this.confirmState(confirm.check, confirm.timeoutMs);
+
+          if (!confirmed) {
+            // Don't re-send: the command was accepted, the device is just slow
+            // (or ignored it). Show the real state again; the regular poll
+            // will correct it if it was merely late.
+            this.log.warn(`Did not see the expected state after ${cmd}=${value} within ${confirm.timeoutMs / 1000}s`);
+            revert();
+          }
+
+          // Whatever the device last told us is the truth, so let HomeKit have it now.
+          if (status) {
+            this.applyStatus(status);
+          }
         }
 
         return data;
@@ -313,40 +358,55 @@ export class CGDGarageDoor {
   // isUpdating as true until Homebridge is restarted. Since we're already
   // serialized against other device traffic by virtue of running inside that
   // command's exclusive section, check status directly.
-  private confirmState = async (check: (status: Status) => boolean, timeoutMs: number): Promise<boolean> => {
+  private confirmState = async (
+    check: (status: Status) => boolean,
+    timeoutMs: number,
+  ): Promise<{ confirmed: boolean; status?: Status }> => {
     const deadline = Date.now() + timeoutMs;
+    let last: Status | undefined;
 
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, this.timings.confirmIntervalMs));
+    // The deadline is enforced on both the wait and the fetch, so a slow
+    // device can't stretch the exclusive section past timeoutMs.
+    while (deadline - Date.now() > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(this.timings.confirmIntervalMs, deadline - Date.now())));
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        break;
+      }
 
       let status: Status | undefined;
       try {
-        status = await this.fetchDevice('status', 'json') as Status;
+        status = await this.fetchDevice('status', 'json', Math.min(5000, remaining)) as Status;
       } catch (error) {
         this.log.warn(`Failed to check status while waiting: ${error}`);
       }
 
       this.log.debug(`Checking status... ${JSON.stringify(status)}`);
 
-      if (status && check(status)) {
-        return true;
+      if (status) {
+        last = status;
+        if (check(status)) {
+          return { confirmed: true, status };
+        }
       }
     }
 
-    return false;
+    return { confirmed: false, status: last };
   };
 
   private doorConfirm = (check: (status: Status) => boolean) => ({ check, timeoutMs: this.timings.confirmDoorTimeoutMs });
 
   private switchConfirm = (check: (status: Status) => boolean) => ({ check, timeoutMs: this.timings.confirmSwitchTimeoutMs });
 
-  private getStatus = async (): Promise<Status | undefined> => {
+  private getStatus = async (): Promise<Status | undefined | typeof POLL_SKIPPED> => {
     this.log.debug('Getting status...');
 
-    const data = await this.run({
-      cmd: 'status', value: 'json',
-      softValue: (new Date()).toLocaleString(),
-    });
+    const data = await this.run({ cmd: 'status', value: 'json' });
+
+    if (data === POLL_SKIPPED) {
+      return POLL_SKIPPED;
+    }
 
     if (!data) {
       this.log.error('Can not get status!');
@@ -366,6 +426,10 @@ export class CGDGarageDoor {
     }
 
     const status = await this.getStatus();
+    if (status === POLL_SKIPPED) {
+      return;
+    }
+
     if (!status) {
       // A failed poll (network hiccup, device busy, etc.) is not the same as
       // the door having no state — keep displaying the last known-good status
@@ -380,6 +444,12 @@ export class CGDGarageDoor {
       return;
     }
 
+    this.applyStatus(status);
+  };
+
+  // Takes a status the device has just reported (from a poll, or from
+  // confirming a command) and makes it the displayed state.
+  private applyStatus = (status: Status) => {
     this.recordPollSuccess(status);
 
     // Track continuity of the *real* device-reported door value, independent of
@@ -510,8 +580,14 @@ export class CGDGarageDoor {
   };
 
   private poolStatus = async () => {
-    await this.refreshStatus();
-    setTimeout(this.poolStatus, this.nextPollDelay());
+    try {
+      await this.refreshStatus();
+    } catch (error) {
+      this.log.error(`Unexpected error refreshing status: ${error}`);
+    } finally {
+      // Always keep polling, even if refreshing (or a listener) threw.
+      setTimeout(this.poolStatus, this.nextPollDelay());
+    }
   };
 
   public onStatusUpdate = (listener: StatusUpdateListener) => {
@@ -528,16 +604,8 @@ export class CGDGarageDoor {
 
   public getDeviceErrorCode = (): string | undefined => this.status?.error;
 
-  public waitForStatus = () => new Promise<void>((resolve) => {
-    this.log.info('Pulse - Ping...');
-    const interval = setInterval(() => {
-      if (this.status) {
-        this.log.info('Pulse - Pong!');
-        clearInterval(interval);
-        resolve();
-      }
-    }, 1000);
-  });
+  // True while a door, lamp or vacation command is queued or in flight.
+  public isCommandPending = (): boolean => this.isUpdating;
 
   // Getters return undefined when the state is unknown; HAP rejects any value
   // outside a characteristic's range, so callers must not pass that through.
