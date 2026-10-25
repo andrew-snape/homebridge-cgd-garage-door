@@ -1,3 +1,23 @@
+# [1.7.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.6.0...v1.7.0) (2026-10-25)
+
+
+### Bug Fixes
+
+* don't treat Stopped as success for open/close, redact the key from errors, bound config values ([509cac5](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/509cac5e576e3308a600c810622684dd78c66920))
+* no optimistic revert for polls, bounded confirmation, check before re-sending door commands ([8f0362a](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/8f0362a3f570c1d8b559aed6025a632383f6570b))
+* settle superseded commands, single-attempt polls, no re-send on slow door, no invalid HAP values ([d6c97d8](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/d6c97d82f7729e4b60b9a632510e7739482b17a8))
+
+
+### Features
+
+* configurable polling, failure threshold and health summary; broaden unit tests and run them in CI ([592b079](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/592b079fdab60e7758895ba5d905698fbd0a05b9))
+* log door events, unknown door texts, error codes and a periodic health summary ([6981a17](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/6981a175de5e54c4c9d29046c8f34efbb57525aa))
+
+
+### Performance Improvements
+
+* cache and share camera snapshots, shorten snapshot timeout ([4682590](https://github.com/andrew-snape/homebridge-cgd-garage-door/commit/4682590cd313eb3a5457f83a97685a927fb06386))
+
 # [1.6.0](https://github.com/andrew-snape/homebridge-cgd-garage-door/compare/v1.5.3...v1.6.0) (2026-10-25)
 
 
