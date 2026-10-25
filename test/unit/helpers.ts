@@ -12,7 +12,7 @@ export const silentLog = Object.assign(() => undefined, {
 export interface FakeDevice {
   // Every request's "cmd=value" query part, in order.
   requests: string[];
-  state: { door: string; lamp: string; vacation: string };
+  state: { door: string; lamp: string; vacation: string; dt: string; error: string; cycles: string; wdBm: string };
   // Called for each request; return true to make it fail with a network error.
   failWhen?: (request: string) => boolean;
   // Called for each request before failWhen, e.g. to model a command that took effect but whose reply was lost.
@@ -27,7 +27,7 @@ export function installFakeDevice(initial: Partial<FakeDevice['state']> = {}): F
   const original = globalThis.fetch;
   const device: FakeDevice = {
     requests: [],
-    state: { door: 'Closed', lamp: 'off', vacation: 'off', ...initial },
+    state: { door: 'Closed', lamp: 'off', vacation: 'off', dt: '2026-10-24 22:07:33', error: '0', cycles: '100', wdBm: '-50', ...initial },
     doorResponds: true,
     restore: () => {
       globalThis.fetch = original;
@@ -52,11 +52,22 @@ export function installFakeDevice(initial: Partial<FakeDevice['state']> = {}): F
       device.state.door = { open: 'Opening', close: 'Closing', stop: 'Stopped' }[value] ?? device.state.door;
     }
 
-    return new Response(JSON.stringify({ ...device.state, wdBm: '-50', error: '0', status: 'ok' }), {
+    return new Response(JSON.stringify({ ...device.state, status: 'ok' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
 
   return device;
+}
+
+// A logger that records "level: message" lines.
+export function captureLog() {
+  const lines: string[] = [];
+  const record = (level: string) => (message: string) => void lines.push(`${level}: ${message}`);
+  const log = Object.assign(record('log'), {
+    info: record('info'), warn: record('warn'), error: record('error'),
+    debug: () => undefined, success: record('success'), log: record('log'),
+  }) as unknown as Logging;
+  return { log, lines };
 }

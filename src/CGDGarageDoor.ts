@@ -1,6 +1,7 @@
 import type { CharacteristicValue, Logging } from 'homebridge';
 import Mutex from './mutex.js';
 import parseDoorState, { DoorState } from './parseDoorState.js';
+import HealthSummary from './health.js';
 import retry, { RETRY_DELAY_MS } from './retry.js';
 
 interface Status {
@@ -37,12 +38,15 @@ export interface Timings {
   // transitional Opening/Closing, so it normally shows within a few seconds).
   confirmDoorTimeoutMs: number;
   confirmSwitchTimeoutMs: number;
+  // How often the health summary line is logged.
+  healthIntervalMs: number;
 }
 
 export interface Options {
   timings?: Partial<Timings>;
   // Tests turn the background poll loop off.
   autoPoll?: boolean;
+  now?: () => number;
 }
 
 const DEFAULT_TIMINGS: Timings = {
@@ -50,6 +54,7 @@ const DEFAULT_TIMINGS: Timings = {
   confirmIntervalMs: 1500,
   confirmDoorTimeoutMs: 10000,
   confirmSwitchTimeoutMs: 5000,
+  healthIntervalMs: 10 * 60 * 1000,
 };
 
 // Poll quickly while the door is moving so HomeKit tracks it, slowly when idle
@@ -99,11 +104,26 @@ export class CGDGarageDoor {
   private unreachable = false;
   private weakSignalWarned = false;
   private readonly timings: Timings;
+  private readonly health: HealthSummary;
+  // Distinct values already warned about, so each is logged once.
+  private readonly warnedDoorTexts = new Set<string>();
+  private readonly warnedErrorCodes = new Set<string>();
+  private lastStatusLatencyMs = 0;
+  private lastPollError?: string;
 
   constructor(log: Logging, config: Config, options: Options = {}) {
     this.log = log;
     this.config = config;
     this.timings = { ...DEFAULT_TIMINGS, ...options.timings };
+    this.health = new HealthSummary(options.now);
+
+    // unref'd so it never keeps the process (or a test run) alive on its own.
+    setInterval(() => {
+      const line = this.health.summarize();
+      if (line) {
+        this.log.info(line);
+      }
+    }, this.timings.healthIntervalMs).unref();
 
     if (options.autoPoll ?? true) {
       this.poolStatus();
@@ -179,11 +199,15 @@ export class CGDGarageDoor {
     const { deviceHostname, deviceLocalKey } = this.config;
     // Node's built-in fetch (undici) keeps connections alive by default,
     // so no custom keep-alive agent is required.
+    const startedAt = Date.now();
     const response = await fetch(`http://${deviceHostname}/api?key=${deviceLocalKey}&${cmd}=${value}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
 
     const data = await response.json();
+    if (cmd === 'status') {
+      this.lastStatusLatencyMs = Date.now() - startedAt;
+    }
 
     const level = response.ok ? 'debug' : 'error';
     this.log[level](response.status.toString());
@@ -296,6 +320,7 @@ export class CGDGarageDoor {
           },
           onFail: (error) => {
             failed = true;
+            this.lastPollError = error instanceof Error ? error.message : String(error);
             this.log.error(`Failed to run command: ${cmd}=${value}`);
             if (error instanceof Error) {
               this.log.error(`Error: ${error.message}`);
@@ -435,9 +460,12 @@ export class CGDGarageDoor {
       // the door having no state — keep displaying the last known-good status
       // rather than wiping it out from under the accessory.
       this.recordPollFailure();
+      this.health.recordFailure(this.lastPollError);
 
       return;
     }
+
+    this.health.recordSuccess(this.lastStatusLatencyMs, Number(status.wdBm), status.cycles);
 
     if (this.isUpdating) {
       this.log.info('Skip updating status because it is updating');
@@ -465,7 +493,29 @@ export class CGDGarageDoor {
     const doorState = parseDoorState(status.door);
     const isTransitional = doorState === DoorState.Opening || doorState === DoorState.Closing;
 
+    // TODO: use these logs to work out which codes mean what (e.g. map an
+    // obstruction code to ObstructionDetected) once there's data.
+    if (status.error && status.error !== '0' && !this.warnedErrorCodes.has(status.error)) {
+      this.warnedErrorCodes.add(status.error);
+      this.log.warn(`Device reported error code ${status.error} while door was "${status.door}" (${status.dt})`);
+    }
+
     if (rawDoorChanged) {
+      // An audit trail of what moved the door (remote, WiFi, ...); only on change.
+      this.log.info(`Door: ${status.door} (${status.dt})`);
+
+      // "Opened. Intruder Alert" appeared on an ordinary WiFi-initiated open, so
+      // it may not mean a real intrusion; it's logged but deliberately not
+      // mapped to anything in HomeKit.
+      if (/intruder/i.test(status.door)) {
+        this.log.warn(`Door reported an intruder alert: ${status.door} (${status.dt})`);
+      }
+
+      if (doorState === DoorState.Error && !this.warnedDoorTexts.has(status.door)) {
+        this.warnedDoorTexts.add(status.door);
+        this.log.warn(`Unrecognised door text from the device: "${status.door}" — please report it so it can be supported`);
+      }
+
       if (isTransitional) {
         this.transitionStartedAt = Date.now();
         this.log.debug(`Transitional state started: ${status.door}`);
@@ -484,6 +534,8 @@ export class CGDGarageDoor {
 
     this.status = displayStatus;
 
+    // TODO: each distinct non-zero code is logged once in applyStatus above;
+    // map them (e.g. to ObstructionDetected) once that log has shown what they mean.
     if (this.hasDeviceError()) {
       this.log.warn(`CGD device reported error code ${this.status?.error}`);
     }
