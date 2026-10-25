@@ -233,7 +233,7 @@ export class CGDCameraPlatform implements DynamicPlatformPlugin {
     const ffmpegPath = videoProcessor || pathToFfmpeg || 'ffmpeg';
 
     const cameraDelegate = new CGDCameraStreamingDelegate(
-      this.log, this.api, videoSourceUrl, ffmpegPath, cgdGarageDoor.withDeviceLock,
+      this.log, this.api, videoSourceUrl, ffmpegPath, cgdGarageDoor.withDeviceLock, cgdGarageDoor.isCommandPending,
     );
 
     const cameraController = new this.api.hap.CameraController({

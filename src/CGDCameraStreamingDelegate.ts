@@ -15,6 +15,7 @@ import type {
   StreamRequestCallback,
 } from 'homebridge';
 import { SRTPCryptoSuites, StreamRequestTypes } from 'homebridge';
+import SnapshotCache from './snapshotCache.js';
 
 interface PendingSession {
   address: string;
@@ -35,8 +36,9 @@ const H264_PROFILE_NAMES = ['baseline', 'main', 'high'];
 const H264_LEVEL_NAMES = ['3.1', '3.2', '4.0'];
 
 // A hung device (or a hung ffmpeg process, e.g. mid-reconnect) should surface
-// as a failed snapshot, not a request that never calls back.
-const SNAPSHOT_TIMEOUT_MS = 10000;
+// as a failed snapshot, not a request that never calls back. A snapshot is a
+// single frame, so keep this short: it holds the device lock while it runs.
+const SNAPSHOT_TIMEOUT_MS = 6000;
 
 export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
   // Set by the platform right after constructing the CameraController, so a
@@ -53,9 +55,19 @@ export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
     private readonly videoSourceUrl: string,
     private readonly videoProcessor: string,
     // Serializes snapshot requests against the garage door's own status
-    // polling — the device only reliably handles one connection at a time.
+    // polling — the device only reliably handles one connection at a time,
+    // and has been seen stalling the API for ~10s when a port 88 connection
+    // closes.
     private readonly deviceLock: <T>(fn: () => Promise<T>) => Promise<T>,
-  ) {}
+    isCommandPending: () => boolean,
+  ) {
+    this.snapshots = new SnapshotCache(
+      (width, height) => this.deviceLock(() => this.runSnapshot(width, height)),
+      isCommandPending,
+    );
+  }
+
+  private readonly snapshots: SnapshotCache;
 
   private allocatePort = (): number => {
     for (let port = 5011; ; port++) {
@@ -67,17 +79,17 @@ export class CGDCameraStreamingDelegate implements CameraStreamingDelegate {
   };
 
   public handleSnapshotRequest = (request: SnapshotRequest, callback: SnapshotRequestCallback): void => {
-    this.deviceLock(() => this.runSnapshot(request)).then(
+    this.snapshots.get(request.width, request.height).then(
       (buffer) => callback(undefined, buffer),
       (error) => callback(error instanceof Error ? error : new Error(String(error))),
     );
   };
 
-  private runSnapshot = (request: SnapshotRequest): Promise<Buffer> => new Promise((resolve, reject) => {
+  private runSnapshot = (width: number, height: number): Promise<Buffer> => new Promise((resolve, reject) => {
     const args = [
       '-i', this.videoSourceUrl,
       '-frames:v', '1',
-      '-vf', `scale=${request.width}:${request.height}`,
+      '-vf', `scale=${width}:${height}`,
       '-f', 'mjpeg',
       'pipe:1',
     ];
